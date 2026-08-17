@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
 echo ========================================
-echo JPCars Personal Cabinet v1.0 Team
+echo JPCars Personal Cabinet v1.1 Telegram
 echo ========================================
 echo.
 if not exist "node_modules\express" (
@@ -18,9 +18,6 @@ if not exist "node_modules\express" (
 echo.
 echo Local admin:
 echo http://localhost:3000/admin
-echo.
-echo First login: admin
-echo Password: change-me
 echo.
 call npm.cmd start
 pause
