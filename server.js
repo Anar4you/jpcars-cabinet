@@ -138,6 +138,26 @@ function actorName(req){
   return u ? `${u.name} (${u.login})` : "anonymous";
 }
 
+function createInternalNotification({userId=null,dealId=null,type="info",title,body="",url=""}){
+  try{
+    db.prepare(`INSERT INTO internal_notifications(user_id,deal_id,type,title,body,url,is_read)
+      VALUES(?,?,?,?,?,?,0)`).run(userId,dealId,type,String(title||""),String(body||""),String(url||""));
+  }catch(e){ console.error("internal notification error",e); }
+}
+
+function notifyAllActiveStaff({dealId=null,type="info",title,body="",url=""}){
+  const users=db.prepare("SELECT id FROM staff_users WHERE active=1").all();
+  for(const u of users){
+    createInternalNotification({userId:u.id,dealId,type,title,body,url});
+  }
+}
+
+function unreadNotificationCount(userId){
+  if(!userId) return 0;
+  const row=db.prepare("SELECT COUNT(*) c FROM internal_notifications WHERE user_id=? AND is_read=0").get(userId);
+  return Number(row?.c || 0);
+}
+
 
 function audit(req,{dealId=null,type="system",resourceId=null,actor=null,action="view"}={}) {
   try {
@@ -354,6 +374,21 @@ CREATE TABLE IF NOT EXISTS notification_logs(
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_notification_logs_deal ON notification_logs(deal_id,id DESC);
+
+CREATE TABLE IF NOT EXISTS internal_notifications(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER,
+  deal_id INTEGER,
+  type TEXT NOT NULL,
+  title TEXT NOT NULL,
+  body TEXT,
+  url TEXT,
+  is_read INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_internal_notifications_user ON internal_notifications(user_id,is_read,id DESC);
+CREATE INDEX IF NOT EXISTS idx_internal_notifications_deal ON internal_notifications(deal_id,id DESC);
+
 `);
 
 db.exec(`
@@ -1032,7 +1067,7 @@ app.get("/c/:token",publicLimiter,(req,res)=>{
 });
 
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.2.3"}));
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.3.0"}));
 
 app.get("/",(_req,res)=>res.redirect("/admin"));
 
@@ -1146,6 +1181,13 @@ app.post("/admin/telegram/:id/message",admin,async (req,res)=>{
 ${esc(message)}`;
   await sendTelegramForDeal(d,"manual_message",body);
   audit(req,{dealId:d.id,type:"telegram",resourceId:d.id,action:"manual_message"});
+  notifyAllActiveStaff({
+    dealId:d.id,
+    type:"manual_client_message_internal",
+    title:"Сообщение клиенту отправлено",
+    body:`${actorName(req)} · Telegram`,
+    url:`/admin/deal/${d.id}`
+  });
   res.redirect("/admin/deal/"+d.id);
 });
 
@@ -1224,7 +1266,7 @@ app.get("/admin",admin,(req,res)=>{
   res.send(shell("Сделки",`<main class="wrap">
     <div class="adminbar">
       <div><h1>${archive?"Архив сделок":"Сделки JPCars"}</h1><div class="muted">${archive?"Завершённые сделки":"Рабочая панель менеджера"}</div></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${req.staff?.role==="admin"?`<a class="btn light" href="/admin/team">Команда</a><a class="btn light" href="/admin/telegram-setup">Telegram</a>`:""}<a class="btn light" href="/admin?archive=${archive?0:1}">${archive?"Активные сделки":"Архив"}</a><a class="btn light" href="/admin/my-telegram">Мой Telegram</a><a class="btn" href="/admin/new">+ Новая сделка</a></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${req.staff?.role==="admin"?`<a class="btn light" href="/admin/team">Команда</a><a class="btn light" href="/admin/telegram-setup">Telegram</a>`:""}<a class="btn light" href="/admin?archive=${archive?0:1}">${archive?"Активные сделки":"Архив"}</a><a class="btn light" href="/admin/notifications">Уведомления${req.staff?` (${unreadNotificationCount(req.staff.id)})`:""}</a><a class="btn light" href="/admin/my-telegram">Мой Telegram</a><a class="btn" href="/admin/new">+ Новая сделка</a></div>
     </div>
 
     <div class="mini-grid" style="margin-bottom:18px">
@@ -1281,6 +1323,13 @@ app.post("/admin/update/:id",admin,async (req,res)=>{
     .run(stage,req.body.current_location,req.body.departure_place,req.body.tracking_url,req.body.departure_date,req.body.eta,req.body.arrival_place,d.id);
   db.prepare("INSERT INTO events(deal_id,title,note) VALUES(?,?,?)")
     .run(d.id,FLOWS[d.country][stage],req.body.note||"Статус сделки обновлён.");
+  notifyAllActiveStaff({
+    dealId:d.id,
+    type:"status_changed_internal",
+    title:"Изменён этап сделки",
+    body:`${FLOWS[d.country][stage]} · ${actorName(req)}`,
+    url:`/admin/deal/${d.id}`
+  });
   res.redirect("/admin/deal/"+d.id);
 });
 
@@ -1414,6 +1463,13 @@ app.post("/c/:token/doc",publicLimiter,upload.single("document"),async (req,res)
   }
 
   audit(req,{dealId:d.id,type:"document",actor:"client",action:`upload:${category}`});
+  notifyAllActiveStaff({
+    dealId:d.id,
+    type:"document_uploaded_internal",
+    title:"Клиент загрузил документ",
+    body:`${d.client_name||"Клиент"} · ${category}`,
+    url:`/admin/deal/${d.id}`
+  });
   res.redirect("/c/"+d.token);
 });
 
@@ -1474,6 +1530,13 @@ app.post("/admin/doc/:docId/status",admin,(req,res)=>{
   audit(req,{dealId:doc.deal_id,type:"document",resourceId:doc.id,action:`review:${status}`});
   db.prepare("UPDATE documents SET status=?,verified=?,manager_comment=? WHERE id=?")
     .run(status,status==="verified"?1:0,req.body.manager_comment||"",doc.id);
+  notifyAllActiveStaff({
+    dealId:doc.deal_id,
+    type:"document_reviewed_internal",
+    title:"Документ проверен",
+    body:`${actorName(req)} · ${status}`,
+    url:`/admin/deal/${doc.deal_id}`
+  });
   res.redirect("/admin/deal/"+doc.deal_id);
 });
 
@@ -1533,6 +1596,13 @@ app.post("/admin/payment/:dealId/new",admin,upload.single("document"),(req,res)=
       file?decodeUploadName(file.originalname):"",
       file?file.filename:""
     );
+  notifyAllActiveStaff({
+    dealId:d.id,
+    type:"payment_created_internal",
+    title:"Добавлен платёж",
+    body:`${req.body.title||"Платёж"} · ${req.body.amount||""}`,
+    url:`/admin/deal/${d.id}`
+  });
   res.redirect("/admin/deal/"+d.id);
 });
 
@@ -1557,6 +1627,61 @@ app.get("/c/:token/payment/:id",(req,res)=>{
 });
 
 
+
+
+app.get("/admin/notifications",admin,(req,res)=>{
+  const rows=db.prepare(`
+    SELECT n.*,d.client_name,d.make,d.model
+    FROM internal_notifications n
+    LEFT JOIN deals d ON d.id=n.deal_id
+    WHERE n.user_id=?
+    ORDER BY n.id DESC
+    LIMIT 200
+  `).all(req.staff.id);
+
+  res.send(shell("Уведомления",`<main class="wrap">
+    <div class="adminbar">
+      <div>
+        <h1>Центр уведомлений</h1>
+        <div class="muted">Важные события по клиентам и сделкам</div>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <form method="post" action="/admin/notifications/read-all">
+          <button class="btn light" type="submit">Отметить всё прочитанным</button>
+        </form>
+        <a href="/admin">← Сделки</a>
+      </div>
+    </div>
+
+    <section class="card">
+      ${rows.length?rows.map(n=>`<div class="row">
+        <div style="flex:1;${Number(n.is_read)===0?"font-weight:600":""}">
+          <div><b>${Number(n.is_read)===0?"● ":""}${esc(n.title)}</b></div>
+          ${n.body?`<div class="muted" style="margin-top:5px">${esc(n.body)}</div>`:""}
+          <div class="muted" style="font-size:12px;margin-top:5px">
+            ${new Date(n.created_at+"Z").toLocaleString("ru-RU")}
+            ${n.deal_id?` · ${esc([n.client_name,[n.make,n.model].filter(Boolean).join(" ")].filter(Boolean).join(" · "))}`:""}
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          ${n.url?`<a class="btn light" href="${esc(n.url)}">Открыть</a>`:""}
+          ${Number(n.is_read)===0?`<form method="post" action="/admin/notifications/${n.id}/read"><button class="btn light" type="submit">Прочитано</button></form>`:""}
+        </div>
+      </div>`).join(""):'<p class="muted">Уведомлений пока нет.</p>'}
+    </section>
+  </main>`,true));
+});
+
+app.post("/admin/notifications/:id/read",admin,(req,res)=>{
+  db.prepare("UPDATE internal_notifications SET is_read=1 WHERE id=? AND user_id=?")
+    .run(req.params.id,req.staff.id);
+  res.redirect(req.get("referer")||"/admin/notifications");
+});
+
+app.post("/admin/notifications/read-all",admin,(req,res)=>{
+  db.prepare("UPDATE internal_notifications SET is_read=1 WHERE user_id=?").run(req.staff.id);
+  res.redirect("/admin/notifications");
+});
 
 app.get("/admin/my-telegram",admin,(req,res)=>{
   const u=db.prepare("SELECT * FROM staff_users WHERE id=?").get(req.staff.id);
@@ -1692,4 +1817,4 @@ app.use((err,req,res,next)=>{
   res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${currentStaff(req)?"/admin":"/"}">Вернуться</a></div></main>`,!!currentStaff(req)));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.2.3 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.3 listening on port ${PORT}; data=${DATA_ROOT}`));
