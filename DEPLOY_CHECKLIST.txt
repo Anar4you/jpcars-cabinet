@@ -1,0 +1,17 @@
+JPCars v0.8.1 — Railway deployment checklist
+
+1. Создать Railway project.
+2. Загрузить проект через GitHub или Railway CLI.
+3. Добавить Volume.
+4. Mount Path: /data
+5. Variables:
+   NODE_ENV=production
+   DATA_DIR=/data
+   ADMIN_PASSWORD=<сложный пароль>
+   SESSION_SECRET=<случайная строка 32+ символа>
+6. Deploy.
+7. Проверить /healthz.
+8. Settings -> Public Networking -> Generate Domain.
+9. Открыть /admin.
+10. Создать тестовую сделку и проверить клиентскую ссылку.
+11. Не загружать реальные чувствительные документы до завершения production-hardening.
