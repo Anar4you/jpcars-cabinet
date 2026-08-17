@@ -1,8 +1,8 @@
 {
   "name": "jpcars-cabinet",
-  "version": "1.3.3",
+  "version": "1.3.4",
   "private": true,
-  "description": "JPCars cabinet v1.3.3 - document versions and safe broker package",
+  "description": "JPCars cabinet v1.3.4 - document tiles UI",
   "scripts": {
     "start": "node server.js"
   },

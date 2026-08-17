@@ -612,6 +612,45 @@ function shell(title, body, isAdmin=false) {
   .journey-body{padding:2px 16px 14px}
   .journey-body .stage{min-height:44px}
 
+  
+  .docs-summary{display:grid;gap:14px}
+  .doc-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:11px}
+  .doc-tile{position:relative;border:1px solid var(--line);border-radius:16px;background:#fff;padding:14px;min-height:118px;display:flex;flex-direction:column;gap:8px}
+  .doc-tile-title{font-size:14px;font-weight:800;color:var(--brand);line-height:1.25;word-break:break-word}
+  .doc-tile-sub{font-size:12px;color:var(--muted);line-height:1.35;word-break:break-word}
+  .doc-tile-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+  .doc-icon{width:38px;height:38px;border-radius:12px;background:#f5f7fa;display:grid;place-items:center;font-size:19px;flex:0 0 auto}
+  .doc-state{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800}
+  .doc-state-mark{width:24px;height:24px;border-radius:999px;display:grid;place-items:center;font-size:13px;font-weight:900}
+  .doc-tile.missing{background:#fbfcfd}
+  .doc-tile.missing .doc-state{color:var(--muted)}
+  .doc-tile.missing .doc-state-mark{background:#eef1f4;color:var(--muted)}
+  .doc-tile.uploaded{border-color:#d8e4f2;background:#f7fbff}
+  .doc-tile.uploaded .doc-state{color:#255fa3}
+  .doc-tile.uploaded .doc-state-mark{background:#e7f1fb;color:#255fa3}
+  .doc-tile.verified{border-color:#d7eee4;background:#f7fcf9}
+  .doc-tile.verified .doc-state{color:var(--green)}
+  .doc-tile.verified .doc-state-mark{background:var(--green-soft);color:var(--green)}
+  .doc-tile.replace{border-color:#f2dec1;background:#fff8ef}
+  .doc-tile.replace .doc-state{color:#b57a15}
+  .doc-tile.replace .doc-state-mark{background:#fff0d8;color:#b57a15}
+  .doc-pick-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:11px}
+  .doc-pick{display:block;position:relative;cursor:pointer}
+  .doc-pick input{position:absolute;opacity:0;pointer-events:none}
+  .doc-pick-card{border:1px solid var(--line);border-radius:16px;background:#fff;padding:14px;min-height:108px;display:flex;flex-direction:column;gap:8px;transition:.15s ease}
+  .doc-pick:hover .doc-pick-card{border-color:#ccd6df;transform:translateY(-1px)}
+  .doc-pick input:checked + .doc-pick-card{border-color:var(--red);box-shadow:0 0 0 3px rgba(233,73,76,.12);background:#fff8f8}
+  .doc-pick-card .doc-title{font-size:14px;font-weight:800;line-height:1.25;color:var(--brand);word-break:break-word}
+  .doc-pick-card .doc-sub{font-size:12px;color:var(--muted);line-height:1.35;word-break:break-word}
+  .doc-list{display:grid;gap:10px;margin-top:4px}
+  .doc-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:14px;padding:14px;border:1px solid var(--line);border-radius:16px;background:#fff}
+  .doc-row-main{min-width:0}
+  .doc-row-main a{word-break:break-word}
+  .doc-row-title{display:flex;align-items:flex-start;gap:8px;line-height:1.35;word-break:break-word}
+  .doc-row-actions{display:flex;align-items:flex-start;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+  .doc-row-actions form{display:flex;gap:5px;flex-wrap:wrap}
+  .doc-help{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.45}
+
   .gallery{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}.thumb{aspect-ratio:4/3;background:#eef1f4;border-radius:14px;display:grid;place-items:center;text-align:center;padding:8px;font-size:12px;overflow:hidden;text-decoration:none;color:var(--brand);font-weight:700}
   .thumb img{width:100%;height:100%;object-fit:cover}.notice{background:#fff8e8;border:1px solid #f4e5b9;padding:13px;border-radius:12px;margin:12px 0;font-size:13px;line-height:1.55}
   .total{font-size:19px;font-weight:900;color:var(--brand)}.doc-status{font-size:12px;font-weight:800}.doc-ok{color:var(--green)}.doc-wait{color:#b57a15}
@@ -623,7 +662,7 @@ function shell(title, body, isAdmin=false) {
     .grid{grid-template-columns:1fr;gap:13px}.full{grid-column:auto}.card{border-radius:18px;padding:17px;box-shadow:0 5px 20px rgba(21,38,61,.045)}
     .hero{min-height:0;padding:20px}.hero h1{font-size:27px}.hero-meta{font-size:13px}.status-main{font-size:17px;margin-top:21px}.progress-wrap{margin-top:20px}
     .hero:before{display:none}.hero:after{right:-170px;top:-140px}.mini-grid{grid-template-columns:1fr 1fr}.mini:last-child{grid-column:1/-1}
-    .gallery{grid-template-columns:repeat(2,1fr)}.row{font-size:13px}.row b{max-width:58%}.route{gap:6px}.route-place{padding:10px 9px}.route-arrow{font-size:16px}
+    .gallery{grid-template-columns:repeat(2,1fr)}.doc-tiles,.doc-pick-grid{grid-template-columns:1fr 1fr}.doc-row{grid-template-columns:1fr}.doc-row-actions{justify-content:flex-start}.row{font-size:13px}.row b{max-width:58%}.route{gap:6px}.route-place{padding:10px 9px}.route-arrow{font-size:16px}
     .bottom-nav{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;left:0;right:0;bottom:0;background:rgba(255,255,255,.97);border-top:1px solid var(--line);z-index:40;padding-bottom:env(safe-area-inset-bottom);box-shadow:0 -8px 24px rgba(21,38,61,.06)}
     .bottom-nav a{text-decoration:none;text-align:center;font-size:10px;color:var(--muted);padding:9px 3px 8px;font-weight:700}.bottom-nav span{display:block;font-size:18px;margin-bottom:3px}
     .desktop-title{display:none}.adminbar{align-items:center}
@@ -849,6 +888,61 @@ function docStatusLabel(doc){
   return {text:"Ожидает проверки", cls:"doc-wait"};
 }
 
+function docIcon(category=""){
+  const c=String(category).toLowerCase();
+  if(c.includes("паспорт")) return "🪪";
+  if(c.includes("инн")) return "🧾";
+  if(c.includes("снилс")) return "🟢";
+  if(c.includes("инвойс")) return "📄";
+  if(c.includes("оплат") || c.includes("платеж")) return "💳";
+  if(c.includes("договор")) return "🤝";
+  if(c.includes("тамож")) return "🛃";
+  if(c.includes("эптс")) return "🚘";
+  if(c.includes("сбктс")) return "✅";
+  if(c.includes("аукцион") || c.includes("объявлен")) return "📸";
+  return "📄";
+}
+
+function docTileMeta(category, docs){
+  const doc=docs.find(x=>x.category===category);
+  if(!doc) return {doc:null,state:"missing",label:"Не загружен",mark:"＋",sub:"Нужно загрузить"};
+  const status=doc.status||"uploaded";
+  if(status==="verified") return {doc,state:"verified",label:"Проверен",mark:"✓",sub:doc.original_name||"Файл загружен"};
+  if(status==="replace") return {doc,state:"replace",label:"Нужно заменить",mark:"!",sub:doc.original_name||"Нужен новый файл"};
+  return {doc,state:"uploaded",label:"На проверке",mark:"⏳",sub:doc.original_name||"Файл загружен"};
+}
+
+function renderRequiredDocTiles(requiredDocs, docs){
+  return `<div class="doc-tiles">${requiredDocs.map(cat=>{
+    const meta=docTileMeta(cat,docs);
+    return `<div class="doc-tile ${meta.state}">
+      <div class="doc-tile-top">
+        <div class="doc-icon">${docIcon(cat)}</div>
+        <div class="doc-state"><span class="doc-state-mark">${meta.mark}</span><span>${esc(meta.label)}</span></div>
+      </div>
+      <div class="doc-tile-title">${esc(cat)}</div>
+      <div class="doc-tile-sub">${esc(meta.sub)}</div>
+    </div>`;
+  }).join("")}</div>`;
+}
+
+function renderDocPickerTiles(docOptions, docs){
+  return `<div class="doc-pick-grid">${docOptions.map((cat,i)=>{
+    const meta=docTileMeta(cat,docs);
+    return `<label class="doc-pick">
+      <input type="radio" name="category" value="${esc(cat)}" ${i===0?"checked":""}>
+      <span class="doc-pick-card">
+        <span style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+          <span class="doc-icon">${docIcon(cat)}</span>
+          <span class="doc-state ${meta.state}"><span class="doc-state-mark">${meta.mark}</span></span>
+        </span>
+        <span class="doc-title">${esc(cat)}</span>
+        <span class="doc-sub">${esc(meta.label)}${meta.doc?` · ${esc(meta.doc.original_name||"Файл")}`:""}</span>
+      </span>
+    </label>`;
+  }).join("")}</div>`;
+}
+
 function renderDeal(d, isAdmin=false) {
   const flow = FLOWS[d.country];
   const allDocs = db.prepare("SELECT * FROM documents WHERE deal_id=? ORDER BY id DESC").all(d.id);
@@ -979,41 +1073,55 @@ function renderDeal(d, isAdmin=false) {
           <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:7px"><b>${completedRequired} из ${requiredDocs.length} необходимых документов</b><span class="muted">${docProgress}%</span></div>
           <div style="height:7px;background:#edf0f2;border-radius:10px;overflow:hidden"><i style="display:block;height:100%;width:${docProgress}%;background:var(--red);border-radius:10px"></i></div>
         </div>
-        <div class="notice"><b>Что потребуется по вашему заказу:</b><br>${DOC_RULES[d.country].map(esc).join(" · ")}</div>
-        ${docs.map(x=>{const ds=docStatusLabel(x);return `<div class="row">
-          <div><span>📄 <a href="${isAdmin?`/admin/doc-file/${x.id}`:`/c/${d.token}/doc/${x.id}`}">${esc(x.category)} — ${esc(x.original_name)}</a>${Number(x.version)>1?` <span class="muted" style="font-size:12px">версия ${x.version}</span>`:""}</span>
-          ${x.manager_comment?`<div class="muted" style="font-size:12px;margin-top:5px">Комментарий: ${esc(x.manager_comment)}</div>`:""}</div>
-          <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
-            <span class="doc-status ${ds.cls}">${ds.text}</span>
-            ${isAdmin?`<form method="post" action="/admin/doc/${x.id}/status" style="display:flex;gap:5px;flex-wrap:wrap">
-              <select name="status" style="padding:8px;border:1px solid var(--line);border-radius:9px">
-                <option value="uploaded" ${(x.status||"uploaded")==="uploaded"?"selected":""}>На проверке</option>
-                <option value="verified" ${(x.status||"uploaded")==="verified"?"selected":""}>Проверен</option>
-                <option value="replace" ${(x.status||"uploaded")==="replace"?"selected":""}>Нужно заменить</option>
-              </select>
-              <input name="manager_comment" value="${esc(x.manager_comment||"")}" placeholder="Комментарий" style="padding:8px;border:1px solid var(--line);border-radius:9px;max-width:220px">
-              <button class="btn light" type="submit">Сохранить</button>
-            </form>`:""}
-            ${isAdmin?`<form method="post" action="/admin/doc/${x.id}/delete" style="display:inline" onsubmit="return confirm('Удалить документ?')"><button class="btn light" type="submit">Удалить</button></form>`:""}
-          </span>
-        </div>`}).join("") || '<p class="muted">Загруженных документов пока нет.</p>'}
+        <div class="docs-summary">
+          <div class="doc-help">Ниже показаны обязательные документы по заказу. Сразу видно, что уже загружено, что проверено и что нужно заменить.</div>
+          ${renderRequiredDocTiles(requiredDocs,docs)}
+        </div>
+
+        <div style="margin-top:16px">
+          <h2 style="margin-bottom:10px">${isAdmin?"Текущие документы клиента":"Загруженные документы"}</h2>
+          <div class="doc-list">
+          ${docs.map(x=>{const ds=docStatusLabel(x);return `<div class="doc-row">
+            <div class="doc-row-main">
+              <div class="doc-row-title"><span>${docIcon(x.category)}</span><span><a href="${isAdmin?`/admin/doc-file/${x.id}`:`/c/${d.token}/doc/${x.id}`}">${esc(x.category)} — ${esc(x.original_name)}</a>${Number(x.version)>1?` <span class="muted" style="font-size:12px">версия ${x.version}</span>`:""}</span></div>
+              ${x.manager_comment?`<div class="doc-help">Комментарий менеджера: ${esc(x.manager_comment)}</div>`:""}
+            </div>
+            <div class="doc-row-actions">
+              <span class="doc-status ${ds.cls}">${ds.text}</span>
+              ${isAdmin?`<form method="post" action="/admin/doc/${x.id}/status">
+                <select name="status" style="padding:8px;border:1px solid var(--line);border-radius:9px">
+                  <option value="uploaded" ${(x.status||"uploaded")==="uploaded"?"selected":""}>На проверке</option>
+                  <option value="verified" ${(x.status||"uploaded")==="verified"?"selected":""}>Проверен</option>
+                  <option value="replace" ${(x.status||"uploaded")==="replace"?"selected":""}>Нужно заменить</option>
+                </select>
+                <input name="manager_comment" value="${esc(x.manager_comment||"")}" placeholder="Комментарий" style="padding:8px;border:1px solid var(--line);border-radius:9px;max-width:220px">
+                <button class="btn light" type="submit">Сохранить</button>
+              </form>`:""}
+              ${isAdmin?`<form method="post" action="/admin/doc/${x.id}/delete" onsubmit="return confirm('Удалить документ?')"><button class="btn light" type="submit">Удалить</button></form>`:""}
+            </div>
+          </div>`}).join("") || '<p class="muted">Загруженных документов пока нет.</p>'}
+          </div>
+        </div>
 
         ${isAdmin && docHistory.length?`<details style="margin-top:14px">
           <summary style="cursor:pointer;font-weight:700">История заменённых документов (${docHistory.length})</summary>
-          <div style="margin-top:10px">
-            ${docHistory.map(x=>{const ds=docStatusLabel(x);return `<div class="row">
-              <div>
-                <span>🕘 <a href="/admin/doc-file/${x.id}">${esc(x.category)} — ${esc(x.original_name)}</a></span>
-                <div class="muted" style="font-size:12px;margin-top:4px">Старая версия ${x.version||1}${x.superseded_at?` · заменена ${new Date(x.superseded_at+"Z").toLocaleString("ru-RU")}`:""}</div>
-                ${x.manager_comment?`<div class="muted" style="font-size:12px;margin-top:4px">Комментарий: ${esc(x.manager_comment)}</div>`:""}
+          <div class="doc-list" style="margin-top:10px">
+            ${docHistory.map(x=>{const ds=docStatusLabel(x);return `<div class="doc-row">
+              <div class="doc-row-main">
+                <div class="doc-row-title"><span>🕘</span><span><a href="/admin/doc-file/${x.id}">${esc(x.category)} — ${esc(x.original_name)}</a></span></div>
+                <div class="doc-help">Старая версия ${x.version||1}${x.superseded_at?` · заменена ${new Date(x.superseded_at+"Z").toLocaleString("ru-RU")}`:""}</div>
+                ${x.manager_comment?`<div class="doc-help">Комментарий: ${esc(x.manager_comment)}</div>`:""}
               </div>
               <span class="doc-status ${ds.cls}">${ds.text}</span>
             </div>`}).join("")}
           </div>
         </details>`:""}
 
-        <form class="form" style="margin-top:14px" action="${isAdmin?"/admin/doc/"+d.id:"/c/"+d.token+"/doc"}" method="post" enctype="multipart/form-data">
-          <select name="category">${docOptions.map(x=>`<option>${esc(x)}</option>`).join("")}</select>
+        <form class="form" style="margin-top:16px" action="${isAdmin?"/admin/doc/"+d.id:"/c/"+d.token+"/doc"}" method="post" enctype="multipart/form-data">
+          <div>
+            <h2 style="margin-bottom:10px">${isAdmin?"Выберите тип документа для загрузки":"Какой документ хотите загрузить"}</h2>
+            ${renderDocPickerTiles(docOptions,docs)}
+          </div>
           <input type="file" name="document" required>
           <button class="btn">${isAdmin?"Загрузить документ":"Добавить документ"}</button>
         </form>
@@ -1132,7 +1240,7 @@ app.get("/c/:token",publicLimiter,(req,res)=>{
 });
 
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.3.3"}));
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.3.4"}));
 
 app.get("/",(_req,res)=>res.redirect("/admin"));
 
@@ -2000,4 +2108,4 @@ app.use((err,req,res,next)=>{
   res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${currentStaff(req)?"/admin":"/"}">Вернуться</a></div></main>`,!!currentStaff(req)));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.3.3 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.3.4 listening on port ${PORT}; data=${DATA_ROOT}`));
