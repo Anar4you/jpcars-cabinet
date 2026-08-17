@@ -1,8 +1,8 @@
 {
   "name": "jpcars-cabinet",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "private": true,
-  "description": "JPCars cabinet v1.2.2 - personal Telegram settings for staff",
+  "description": "JPCars cabinet v1.2.3 - document upload and staff Telegram notification fix",
   "scripts": {
     "start": "node server.js"
   },

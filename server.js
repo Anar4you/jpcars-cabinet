@@ -735,7 +735,9 @@ async function notifyStaffClientUpload(d,docTitle){
 Документ: <b>${esc(docTitle||"Новый документ")}</b>`,
         parse_mode:"HTML",
         disable_web_page_preview:true,
-        reply_markup:{inline_keyboard:[[{text:"Открыть сделку",url:`${PUBLIC_BASE_URL}/admin/deal/${d.id}`}]]}
+        reply_markup:PUBLIC_BASE_URL
+          ? {inline_keyboard:[[{text:"Открыть сделку",url:`${PUBLIC_BASE_URL}/admin/deal/${d.id}`}]]}
+          : undefined
       });
       db.prepare("INSERT INTO notification_logs(deal_id,channel,event,recipient,success,error) VALUES(?,?,?,?,1,'')")
         .run(d.id,"telegram_staff","client_document_uploaded",String(u.telegram_chat_id));
@@ -1030,7 +1032,7 @@ app.get("/c/:token",publicLimiter,(req,res)=>{
 });
 
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.2.2"}));
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.2.3"}));
 
 app.get("/",(_req,res)=>res.redirect("/admin"));
 
@@ -1400,10 +1402,18 @@ registerDocRoute("/admin/doc",true);
 app.post("/c/:token/doc",publicLimiter,upload.single("document"),async (req,res)=>{
   const d=db.prepare("SELECT * FROM deals WHERE token=? AND access_enabled=1").get(req.params.token);
   if(!d || !req.file) return res.sendStatus(403);
+  const category=String(req.body.category||"Новый документ").trim() || "Новый документ";
   db.prepare("INSERT INTO documents(deal_id,category,original_name,stored_name,uploader,status) VALUES(?,?,?,?,?,?)")
-    .run(d.id,req.body.category,decodeUploadName(req.file.originalname),req.file.filename,"client","uploaded");
-  const latestDoc=db.prepare("SELECT title FROM documents WHERE deal_id=? ORDER BY id DESC LIMIT 1").get(d.id);
-  await notifyStaffClientUpload(d,latestDoc?.title||"Новый документ");
+    .run(d.id,category,decodeUploadName(req.file.originalname),req.file.filename,"client","uploaded");
+
+  // Telegram notification must never make a successful document upload fail.
+  try{
+    await notifyStaffClientUpload(d,category);
+  }catch(e){
+    console.error("Staff Telegram notification after client upload failed:",e);
+  }
+
+  audit(req,{dealId:d.id,type:"document",actor:"client",action:`upload:${category}`});
   res.redirect("/c/"+d.token);
 });
 
@@ -1682,4 +1692,4 @@ app.use((err,req,res,next)=>{
   res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${currentStaff(req)?"/admin":"/"}">Вернуться</a></div></main>`,!!currentStaff(req)));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.2.2 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.2.3 listening on port ${PORT}; data=${DATA_ROOT}`));
