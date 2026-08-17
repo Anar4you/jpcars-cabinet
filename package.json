@@ -1,8 +1,8 @@
 {
   "name": "jpcars-cabinet",
-  "version": "1.3.1",
+  "version": "1.3.2",
   "private": true,
-  "description": "JPCars cabinet v1.3.1 - automatic Telegram status notification fix",
+  "description": "JPCars cabinet v1.3.2 - client Telegram notifications for document review",
   "scripts": {
     "start": "node server.js"
   },

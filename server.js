@@ -1067,7 +1067,7 @@ app.get("/c/:token",publicLimiter,(req,res)=>{
 });
 
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.3.1"}));
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.3.2"}));
 
 app.get("/",(_req,res)=>res.redirect("/admin"));
 
@@ -1545,7 +1545,7 @@ app.get("/admin/media-file/:id",admin,(req,res)=>{
 });
 
 
-app.post("/admin/doc/:docId/status",admin,(req,res)=>{
+app.post("/admin/doc/:docId/status",admin,async (req,res)=>{
   const doc=db.prepare("SELECT * FROM documents WHERE id=?").get(req.params.docId);
   if(!doc) return res.sendStatus(404);
   const allowed=["uploaded","verified","replace"];
@@ -1560,6 +1560,49 @@ app.post("/admin/doc/:docId/status",admin,(req,res)=>{
     body:`${actorName(req)} · ${status}`,
     url:`/admin/deal/${doc.deal_id}`
   });
+
+  const d=db.prepare("SELECT * FROM deals WHERE id=?").get(doc.deal_id);
+  if(d && d.telegram_chat_id){
+    const comment=String(req.body.manager_comment||"").trim();
+    let message="";
+
+    if(status==="verified"){
+      message=`✅ <b>JPCars — документ принят</b>
+
+Документ: <b>${esc(doc.category||doc.original_name||"Документ")}</b>
+Мы проверили документ — всё в порядке.${comment?`
+
+Комментарий менеджера:
+${esc(comment)}`:""}
+
+Дополнительных действий по этому документу сейчас не требуется.`;
+    }else if(status==="replace"){
+      message=`⚠️ <b>JPCars — документ нужно заменить</b>
+
+Документ: <b>${esc(doc.category||doc.original_name||"Документ")}</b>
+Пожалуйста, загрузите новый файл в личном кабинете.${comment?`
+
+Комментарий менеджера:
+${esc(comment)}`:""}`;
+    }
+
+    if(message){
+      const tgResult=await sendTelegramForDeal(
+        d,
+        status==="verified"?"document_verified":"document_replace_requested",
+        message
+      );
+      console.log("Client Telegram document review notification",{
+        dealId:d.id,
+        documentId:doc.id,
+        status,
+        telegramConnected:!!d.telegram_chat_id,
+        notificationsEnabled:Number(d.telegram_notifications_enabled)!==0,
+        result:tgResult?.ok?"sent":tgResult?.skipped?"skipped":"failed"
+      });
+    }
+  }
+
   res.redirect("/admin/deal/"+doc.deal_id);
 });
 
@@ -1840,4 +1883,4 @@ app.use((err,req,res,next)=>{
   res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${currentStaff(req)?"/admin":"/"}">Вернуться</a></div></main>`,!!currentStaff(req)));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.3.1 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.3.2 listening on port ${PORT}; data=${DATA_ROOT}`));
