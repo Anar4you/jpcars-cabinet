@@ -1067,7 +1067,7 @@ app.get("/c/:token",publicLimiter,(req,res)=>{
 });
 
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.3.0"}));
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.3.1"}));
 
 app.get("/",(_req,res)=>res.redirect("/admin"));
 
@@ -1330,6 +1330,29 @@ app.post("/admin/update/:id",admin,async (req,res)=>{
     body:`${FLOWS[d.country][stage]} · ${actorName(req)}`,
     url:`/admin/deal/${d.id}`
   });
+
+  const updated=db.prepare("SELECT * FROM deals WHERE id=?").get(d.id);
+
+  if(req.body.silent_telegram!=="1"){
+    const tgResult=await sendTelegramForDeal(
+      updated,
+      "status_changed",
+      humanStatusMessage(updated,FLOWS[d.country][stage],req.body.note||"")
+    );
+    console.log("Client Telegram status notification",{
+      dealId:d.id,
+      stage,
+      telegramConnected:!!updated.telegram_chat_id,
+      notificationsEnabled:Number(updated.telegram_notifications_enabled)!==0,
+      result:tgResult?.ok?"sent":tgResult?.skipped?"skipped":"failed"
+    });
+  }else{
+    db.prepare("INSERT INTO notification_logs(deal_id,channel,event,recipient,success,error) VALUES(?,?,?,?,1,?)")
+      .run(d.id,"telegram","status_changed_silent",String(updated.telegram_chat_id||""),"Отправка отключена менеджером");
+    console.log("Client Telegram status notification skipped by manager",{dealId:d.id,stage});
+  }
+
+  audit(req,{dealId:d.id,type:"deal",resourceId:d.id,action:`status:${stage}`});
   res.redirect("/admin/deal/"+d.id);
 });
 
@@ -1817,4 +1840,4 @@ app.use((err,req,res,next)=>{
   res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${currentStaff(req)?"/admin":"/"}">Вернуться</a></div></main>`,!!currentStaff(req)));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.3 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.3.1 listening on port ${PORT}; data=${DATA_ROOT}`));
