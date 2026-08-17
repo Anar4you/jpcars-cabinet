@@ -347,6 +347,39 @@ try { db.exec("ALTER TABLE deals ADD COLUMN access_enabled INTEGER DEFAULT 1"); 
 try { db.exec("ALTER TABLE documents ADD COLUMN status TEXT DEFAULT 'uploaded'"); } catch(e) {}
 try { db.exec("ALTER TABLE documents ADD COLUMN manager_comment TEXT"); } catch(e) {}
 
+try { db.exec("ALTER TABLE documents ADD COLUMN is_current INTEGER NOT NULL DEFAULT 1"); } catch(e) {}
+try { db.exec("ALTER TABLE documents ADD COLUMN version INTEGER NOT NULL DEFAULT 1"); } catch(e) {}
+try { db.exec("ALTER TABLE documents ADD COLUMN superseded_at TEXT"); } catch(e) {}
+
+/*
+  Normalize existing data:
+  - only the newest file of each deal/category is current;
+  - historical rows receive stable version numbers in upload order.
+*/
+try {
+  db.exec(`
+    UPDATE documents
+    SET version=(
+      SELECT COUNT(*)
+      FROM documents d2
+      WHERE d2.deal_id=documents.deal_id
+        AND d2.category=documents.category
+        AND d2.id<=documents.id
+    );
+
+    UPDATE documents SET is_current=0;
+
+    UPDATE documents
+    SET is_current=1
+    WHERE id IN (
+      SELECT MAX(id)
+      FROM documents
+      GROUP BY deal_id, category
+    );
+  `);
+} catch(e) { console.error("Document version normalization error",e); }
+
+
 try { db.exec("ALTER TABLE deals ADD COLUMN archived INTEGER DEFAULT 0"); } catch(e) {}
 
 try { db.exec("ALTER TABLE deals ADD COLUMN telegram_chat_id TEXT"); } catch(e) {}
@@ -794,6 +827,21 @@ function paymentStatusLabel(status){
   return {text:"Ожидается", cls:"muted"};
 }
 
+
+function nextDocumentVersion(dealId,category){
+  const row=db.prepare("SELECT MAX(version) v FROM documents WHERE deal_id=? AND category=?")
+    .get(dealId,category);
+  return Number(row?.v || 0)+1;
+}
+
+function supersedeCurrentDocument(dealId,category){
+  db.prepare(`
+    UPDATE documents
+    SET is_current=0, superseded_at=CURRENT_TIMESTAMP
+    WHERE deal_id=? AND category=? AND is_current=1
+  `).run(dealId,category);
+}
+
 function docStatusLabel(doc){
   const status=doc.status||"uploaded";
   if(status==="verified") return {text:"✓ Проверен", cls:"doc-ok"};
@@ -803,7 +851,9 @@ function docStatusLabel(doc){
 
 function renderDeal(d, isAdmin=false) {
   const flow = FLOWS[d.country];
-  const docs = db.prepare("SELECT * FROM documents WHERE deal_id=? ORDER BY id DESC").all(d.id);
+  const allDocs = db.prepare("SELECT * FROM documents WHERE deal_id=? ORDER BY id DESC").all(d.id);
+  const docs = allDocs.filter(x=>Number(x.is_current)===1);
+  const docHistory = allDocs.filter(x=>Number(x.is_current)!==1);
   const media = db.prepare("SELECT * FROM media WHERE deal_id=? ORDER BY id DESC").all(d.id);
   const events = db.prepare("SELECT * FROM events WHERE deal_id=? ORDER BY id DESC").all(d.id);
   const payments = db.prepare("SELECT * FROM payments WHERE deal_id=? ORDER BY id ASC").all(d.id);
@@ -931,7 +981,7 @@ function renderDeal(d, isAdmin=false) {
         </div>
         <div class="notice"><b>Что потребуется по вашему заказу:</b><br>${DOC_RULES[d.country].map(esc).join(" · ")}</div>
         ${docs.map(x=>{const ds=docStatusLabel(x);return `<div class="row">
-          <div><span>📄 <a href="${isAdmin?`/admin/doc-file/${x.id}`:`/c/${d.token}/doc/${x.id}`}">${esc(x.category)} — ${esc(x.original_name)}</a></span>
+          <div><span>📄 <a href="${isAdmin?`/admin/doc-file/${x.id}`:`/c/${d.token}/doc/${x.id}`}">${esc(x.category)} — ${esc(x.original_name)}</a>${Number(x.version)>1?` <span class="muted" style="font-size:12px">версия ${x.version}</span>`:""}</span>
           ${x.manager_comment?`<div class="muted" style="font-size:12px;margin-top:5px">Комментарий: ${esc(x.manager_comment)}</div>`:""}</div>
           <span style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
             <span class="doc-status ${ds.cls}">${ds.text}</span>
@@ -948,12 +998,27 @@ function renderDeal(d, isAdmin=false) {
           </span>
         </div>`}).join("") || '<p class="muted">Загруженных документов пока нет.</p>'}
 
+        ${isAdmin && docHistory.length?`<details style="margin-top:14px">
+          <summary style="cursor:pointer;font-weight:700">История заменённых документов (${docHistory.length})</summary>
+          <div style="margin-top:10px">
+            ${docHistory.map(x=>{const ds=docStatusLabel(x);return `<div class="row">
+              <div>
+                <span>🕘 <a href="/admin/doc-file/${x.id}">${esc(x.category)} — ${esc(x.original_name)}</a></span>
+                <div class="muted" style="font-size:12px;margin-top:4px">Старая версия ${x.version||1}${x.superseded_at?` · заменена ${new Date(x.superseded_at+"Z").toLocaleString("ru-RU")}`:""}</div>
+                ${x.manager_comment?`<div class="muted" style="font-size:12px;margin-top:4px">Комментарий: ${esc(x.manager_comment)}</div>`:""}
+              </div>
+              <span class="doc-status ${ds.cls}">${ds.text}</span>
+            </div>`}).join("")}
+          </div>
+        </details>`:""}
+
         <form class="form" style="margin-top:14px" action="${isAdmin?"/admin/doc/"+d.id:"/c/"+d.token+"/doc"}" method="post" enctype="multipart/form-data">
           <select name="category">${docOptions.map(x=>`<option>${esc(x)}</option>`).join("")}</select>
           <input type="file" name="document" required>
           <button class="btn">${isAdmin?"Загрузить документ":"Добавить документ"}</button>
         </form>
-        ${isAdmin?`<a class="btn light" style="display:inline-block;margin-top:12px" href="/admin/broker/${d.id}">📦 Пакет для брокера</a>`:""}
+        ${isAdmin?`<a class="btn light" style="display:inline-block;margin-top:12px" href="/admin/broker/${d.id}">📦 Пакет для брокера</a>
+        <div class="muted" style="font-size:12px;margin-top:7px">В пакет входят только актуальные проверенные документы клиента и актуальные документы, загруженные менеджером. Отклонённые и старые версии исключаются.</div>`:""}
       </section>
 
       ${!isAdmin?`<section class="card full">
@@ -1067,7 +1132,7 @@ app.get("/c/:token",publicLimiter,(req,res)=>{
 });
 
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.3.2"}));
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.3.3"}));
 
 app.get("/",(_req,res)=>res.redirect("/admin"));
 
@@ -1464,8 +1529,23 @@ function registerDocRoute(prefix,isAdmin){
   app.post(prefix+"/:id",isAdmin?admin:(req,res,next)=>next(),upload.single("document"),(req,res)=>{
     const d=db.prepare("SELECT * FROM deals WHERE id=?").get(req.params.id);
     if(!d || !req.file) return res.sendStatus(400);
-    db.prepare("INSERT INTO documents(deal_id,category,original_name,stored_name,uploader) VALUES(?,?,?,?,?)")
-      .run(d.id,req.body.category,decodeUploadName(req.file.originalname),req.file.filename,isAdmin?"manager":"client");
+    const category=String(req.body.category||"Новый документ").trim() || "Новый документ";
+    const version=nextDocumentVersion(d.id,category);
+    supersedeCurrentDocument(d.id,category);
+    db.prepare(`INSERT INTO documents(
+      deal_id,category,original_name,stored_name,uploader,status,verified,is_current,version
+    ) VALUES(?,?,?,?,?,?,?,?,?)`)
+      .run(
+        d.id,
+        category,
+        decodeUploadName(req.file.originalname),
+        req.file.filename,
+        isAdmin?"manager":"client",
+        isAdmin?"verified":"uploaded",
+        isAdmin?1:0,
+        1,
+        version
+      );
     res.redirect(isAdmin?"/admin/deal/"+d.id:"/c/"+d.token);
   });
 }
@@ -1475,8 +1555,22 @@ app.post("/c/:token/doc",publicLimiter,upload.single("document"),async (req,res)
   const d=db.prepare("SELECT * FROM deals WHERE token=? AND access_enabled=1").get(req.params.token);
   if(!d || !req.file) return res.sendStatus(403);
   const category=String(req.body.category||"Новый документ").trim() || "Новый документ";
-  db.prepare("INSERT INTO documents(deal_id,category,original_name,stored_name,uploader,status) VALUES(?,?,?,?,?,?)")
-    .run(d.id,category,decodeUploadName(req.file.originalname),req.file.filename,"client","uploaded");
+  const version=nextDocumentVersion(d.id,category);
+  supersedeCurrentDocument(d.id,category);
+  db.prepare(`INSERT INTO documents(
+    deal_id,category,original_name,stored_name,uploader,status,verified,is_current,version
+  ) VALUES(?,?,?,?,?,?,?,?,?)`)
+    .run(
+      d.id,
+      category,
+      decodeUploadName(req.file.originalname),
+      req.file.filename,
+      "client",
+      "uploaded",
+      0,
+      1,
+      version
+    );
 
   // Telegram notification must never make a successful document upload fail.
   try{
@@ -1485,12 +1579,12 @@ app.post("/c/:token/doc",publicLimiter,upload.single("document"),async (req,res)
     console.error("Staff Telegram notification after client upload failed:",e);
   }
 
-  audit(req,{dealId:d.id,type:"document",actor:"client",action:`upload:${category}`});
+  audit(req,{dealId:d.id,type:"document",actor:"client",action:`upload:${category}:v${version}`});
   notifyAllActiveStaff({
     dealId:d.id,
     type:"document_uploaded_internal",
     title:"Клиент загрузил документ",
-    body:`${d.client_name||"Клиент"} · ${category}`,
+    body:`${d.client_name||"Клиент"} · ${category}${version>1?` · новая версия ${version}`:""}`,
     url:`/admin/deal/${d.id}`
   });
   res.redirect("/c/"+d.token);
@@ -1507,7 +1601,7 @@ app.post("/admin/media/:id",admin,upload.array("media",20),(req,res)=>{
 app.get("/c/:token/doc/:id",(req,res)=>{
   const d=db.prepare("SELECT * FROM deals WHERE token=? AND access_enabled=1").get(req.params.token);
   if(!d) return res.sendStatus(403);
-  const x=db.prepare("SELECT * FROM documents WHERE id=? AND deal_id=?").get(req.params.id,d.id);
+  const x=db.prepare("SELECT * FROM documents WHERE id=? AND deal_id=? AND is_current=1").get(req.params.id,d.id);
   if(!x) return res.sendStatus(404);
   const filePath=path.join(UPLOAD_DIR,x.stored_name);
   if(!fs.existsSync(filePath)) return res.sendStatus(404);
@@ -1546,7 +1640,7 @@ app.get("/admin/media-file/:id",admin,(req,res)=>{
 
 
 app.post("/admin/doc/:docId/status",admin,async (req,res)=>{
-  const doc=db.prepare("SELECT * FROM documents WHERE id=?").get(req.params.docId);
+  const doc=db.prepare("SELECT * FROM documents WHERE id=? AND is_current=1").get(req.params.docId);
   if(!doc) return res.sendStatus(404);
   const allowed=["uploaded","verified","replace"];
   const status=allowed.includes(req.body.status)?req.body.status:"uploaded";
@@ -1609,9 +1703,24 @@ ${esc(comment)}`:""}`;
 app.post("/admin/doc/:docId/delete",admin,(req,res)=>{
   const doc=db.prepare("SELECT * FROM documents WHERE id=?").get(req.params.docId);
   if(!doc) return res.sendStatus(404);
+  const wasCurrent=Number(doc.is_current)===1;
   const p=path.join(UPLOAD_DIR,doc.stored_name);
   if(fs.existsSync(p)) fs.unlinkSync(p);
   db.prepare("DELETE FROM documents WHERE id=?").run(doc.id);
+
+  if(wasCurrent){
+    const previous=db.prepare(`
+      SELECT * FROM documents
+      WHERE deal_id=? AND category=?
+      ORDER BY version DESC,id DESC
+      LIMIT 1
+    `).get(doc.deal_id,doc.category);
+    if(previous){
+      db.prepare("UPDATE documents SET is_current=1,superseded_at=NULL WHERE id=?").run(previous.id);
+    }
+  }
+
+  audit(req,{dealId:doc.deal_id,type:"document",resourceId:doc.id,action:"delete"});
   res.redirect("/admin/deal/"+doc.deal_id);
 });
 
@@ -1865,14 +1974,22 @@ app.post("/admin/team/:id/toggle",superAdmin,(req,res)=>{
 app.get("/admin/broker/:id",admin,(req,res)=>{
   const d=db.prepare("SELECT * FROM deals WHERE id=?").get(req.params.id);
   if(!d) return res.sendStatus(404);
-  const docs=db.prepare("SELECT * FROM documents WHERE deal_id=?").all(req.params.id);
+  const docs=db.prepare(`
+    SELECT * FROM documents
+    WHERE deal_id=?
+      AND is_current=1
+      AND status!='replace'
+      AND (status='verified' OR uploader='manager')
+    ORDER BY category,id
+  `).all(req.params.id);
   const archive=archiver("zip");
   res.attachment(`JPCars_${d.id}_broker.zip`);
   archive.pipe(res);
   for(const x of docs){
     const filePath=path.join(UPLOAD_DIR,x.stored_name);
-    if(fs.existsSync(filePath)) archive.file(filePath,{name:x.category+"_"+x.original_name});
+    if(fs.existsSync(filePath)) archive.file(filePath,{name:`${x.category}_${x.original_name}`});
   }
+  audit(req,{dealId:d.id,type:"broker",resourceId:d.id,action:`package:${docs.length}_documents`});
   archive.finalize();
 });
 
@@ -1883,4 +2000,4 @@ app.use((err,req,res,next)=>{
   res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${currentStaff(req)?"/admin":"/"}">Вернуться</a></div></main>`,!!currentStaff(req)));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.3.2 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.3.3 listening on port ${PORT}; data=${DATA_ROOT}`));
