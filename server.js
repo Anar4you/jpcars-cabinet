@@ -424,6 +424,9 @@ app.use(session({
 }));
 
 app.use((req,res,next)=>{
+  // Telegram is not a browser and therefore does not send Origin/Referer.
+  // This endpoint is protected separately by TELEGRAM_WEBHOOK_SECRET.
+  if(req.path==="/telegram/webhook") return next();
   if(!IS_PROD || !["POST","PUT","PATCH","DELETE"].includes(req.method)) return next();
   const expected=`${req.protocol}://${req.get("host")}`;
   const origin=req.get("origin");
@@ -949,7 +952,7 @@ app.get("/c/:token",publicLimiter,(req,res)=>{
 });
 
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.1.1"}));
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.1.2"}));
 
 app.get("/",(_req,res)=>res.redirect("/admin"));
 
@@ -991,6 +994,7 @@ const superAdmin=(req,res,next)=>{
 };
 
 app.post("/telegram/webhook",async (req,res)=>{
+  console.log("Telegram webhook received", new Date().toISOString());
   if(!TELEGRAM_BOT_TOKEN) return res.sendStatus(404);
   if(TELEGRAM_WEBHOOK_SECRET){
     const secret=req.get("x-telegram-bot-api-secret-token")||"";
@@ -1495,4 +1499,4 @@ app.use((err,req,res,next)=>{
   res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${currentStaff(req)?"/admin":"/"}">Вернуться</a></div></main>`,!!currentStaff(req)));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.1.1 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.1.2 listening on port ${PORT}; data=${DATA_ROOT}`));
