@@ -949,6 +949,47 @@ app.get("/c/:token",publicLimiter,(req,res)=>{
 });
 
 
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.1.1"}));
+
+app.get("/",(_req,res)=>res.redirect("/admin"));
+
+app.get("/admin/login",(req,res)=>{
+  res.send(shell("Вход",`<main class="wrap" style="max-width:430px"><div class="card">
+    <h1>Админка JPCars</h1>
+    <form class="form" method="post"><input name="login" placeholder="Логин" required>
+    <input type="password" name="password" placeholder="Пароль" required>
+    <button class="btn">Войти</button></form>
+    ${IS_PROD?"":`<p class="muted">Локально: admin / change-me</p>`}
+  </div></main>`));
+});
+
+app.post("/admin/login",loginLimiter,(req,res)=>{
+  const login=String(req.body.login||"").trim();
+  const password=String(req.body.password||"");
+  const user=db.prepare("SELECT * FROM staff_users WHERE login=? AND active=1").get(login);
+  if(user && verifyPassword(password,user.password_salt,user.password_hash)){
+    req.session.staffId=user.id;
+    audit(req,{type:"auth",actor:`${user.name} (${user.login})`,action:"login_success"});
+    return res.redirect("/admin");
+  }
+  audit(req,{type:"auth",actor:login||"anonymous",action:"login_failed"});
+  res.status(401).send("Неверный логин или пароль");
+});
+
+const admin=(req,res,next)=>{
+  const u=currentStaff(req);
+  if(!u) return res.redirect("/admin/login");
+  req.staff=u;
+  next();
+};
+const superAdmin=(req,res,next)=>{
+  const u=currentStaff(req);
+  if(!u) return res.redirect("/admin/login");
+  if(u.role!=="admin") return res.status(403).send("Недостаточно прав");
+  req.staff=u;
+  next();
+};
+
 app.post("/telegram/webhook",async (req,res)=>{
   if(!TELEGRAM_BOT_TOKEN) return res.sendStatus(404);
   if(TELEGRAM_WEBHOOK_SECRET){
@@ -1025,46 +1066,6 @@ app.post("/admin/telegram-setup",superAdmin,async (req,res)=>{
   }catch(e){ res.status(500).send(`Telegram webhook error: ${esc(e.message)}`); }
 });
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.1.0"}));
-
-app.get("/",(_req,res)=>res.redirect("/admin"));
-
-app.get("/admin/login",(req,res)=>{
-  res.send(shell("Вход",`<main class="wrap" style="max-width:430px"><div class="card">
-    <h1>Админка JPCars</h1>
-    <form class="form" method="post"><input name="login" placeholder="Логин" required>
-    <input type="password" name="password" placeholder="Пароль" required>
-    <button class="btn">Войти</button></form>
-    ${IS_PROD?"":`<p class="muted">Локально: admin / change-me</p>`}
-  </div></main>`));
-});
-
-app.post("/admin/login",loginLimiter,(req,res)=>{
-  const login=String(req.body.login||"").trim();
-  const password=String(req.body.password||"");
-  const user=db.prepare("SELECT * FROM staff_users WHERE login=? AND active=1").get(login);
-  if(user && verifyPassword(password,user.password_salt,user.password_hash)){
-    req.session.staffId=user.id;
-    audit(req,{type:"auth",actor:`${user.name} (${user.login})`,action:"login_success"});
-    return res.redirect("/admin");
-  }
-  audit(req,{type:"auth",actor:login||"anonymous",action:"login_failed"});
-  res.status(401).send("Неверный логин или пароль");
-});
-
-const admin=(req,res,next)=>{
-  const u=currentStaff(req);
-  if(!u) return res.redirect("/admin/login");
-  req.staff=u;
-  next();
-};
-const superAdmin=(req,res,next)=>{
-  const u=currentStaff(req);
-  if(!u) return res.redirect("/admin/login");
-  if(u.role!=="admin") return res.status(403).send("Недостаточно прав");
-  req.staff=u;
-  next();
-};
 
 app.get("/admin/logout",(req,res)=>{
   audit(req,{type:"auth",action:"logout"});
@@ -1494,4 +1495,4 @@ app.use((err,req,res,next)=>{
   res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${currentStaff(req)?"/admin":"/"}">Вернуться</a></div></main>`,!!currentStaff(req)));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.1 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.1.1 listening on port ${PORT}; data=${DATA_ROOT}`));
