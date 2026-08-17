@@ -1,8 +1,8 @@
 {
   "name": "jpcars-cabinet",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "private": true,
-  "description": "JPCars cabinet v1.1 - Telegram client notifications",
+  "description": "JPCars cabinet v1.2 - Telegram notifications 2.0",
   "scripts": {
     "start": "node server.js"
   },

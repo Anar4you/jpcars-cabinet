@@ -70,6 +70,11 @@ CREATE TABLE IF NOT EXISTS staff_users (
   password_salt TEXT NOT NULL,
   role TEXT NOT NULL DEFAULT 'manager',
   active INTEGER NOT NULL DEFAULT 1,
+  telegram_chat_id TEXT,
+  telegram_username TEXT,
+  telegram_first_name TEXT,
+  telegram_connected_at TEXT,
+  notify_client_uploads INTEGER NOT NULL DEFAULT 1,
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -328,6 +333,14 @@ try { db.exec("ALTER TABLE deals ADD COLUMN telegram_chat_id TEXT"); } catch(e) 
 try { db.exec("ALTER TABLE deals ADD COLUMN telegram_username TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE deals ADD COLUMN telegram_first_name TEXT"); } catch(e) {}
 try { db.exec("ALTER TABLE deals ADD COLUMN telegram_connected_at TEXT"); } catch(e) {}
+
+try { db.exec("ALTER TABLE staff_users ADD COLUMN telegram_chat_id TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE staff_users ADD COLUMN telegram_username TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE staff_users ADD COLUMN telegram_first_name TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE staff_users ADD COLUMN telegram_connected_at TEXT"); } catch(e) {}
+try { db.exec("ALTER TABLE staff_users ADD COLUMN notify_client_uploads INTEGER NOT NULL DEFAULT 1"); } catch(e) {}
+try { db.exec("ALTER TABLE deals ADD COLUMN telegram_notifications_enabled INTEGER NOT NULL DEFAULT 1"); } catch(e) {}
+
 
 db.exec(`
 CREATE TABLE IF NOT EXISTS notification_logs(
@@ -646,7 +659,7 @@ function telegramConnectUrl(d){
 }
 
 async function sendTelegramForDeal(d,event,text){
-  if(!d.telegram_chat_id) return {skipped:true};
+  if(!d.telegram_chat_id || Number(d.telegram_notifications_enabled)===0) return {skipped:true};
   try{
     await telegramApi("sendMessage",{
       chat_id:d.telegram_chat_id,
@@ -676,6 +689,66 @@ function telegramStatusMessage(d,stageTitle,note=""){
 ${esc(note)}`:""}
 
 Следить за процессом можно в личном кабинете.`;
+}
+
+function humanStatusMessage(d,stageTitle,note=""){
+  const car=[d.make,d.model].filter(Boolean).join(" ") || "Ваш автомобиль";
+  const title=String(stageTitle||"").trim();
+  const hints = {
+    "Выставлена таможенная пошлина для оплаты":"Таможенная пошлина рассчитана и выставлена к оплате.",
+    "Таможенная пошлина оплачена":"Оплата таможенной пошлины получена. Продолжаем оформление автомобиля.",
+    "Автомобиль пришел во Владивосток на СВХ":"Автомобиль прибыл во Владивосток и размещён на складе временного хранения.",
+    "Автомобиль прошел лабораторию":"Лабораторные процедуры завершены. Переходим к следующему этапу оформления.",
+    "Документы ЭПТС и СБКТС получены":"ЭПТС и СБКТС получены. Документальная часть почти завершена.",
+    "Автомобиль отправлен из Владивостока до города клиента":"Автомобиль отправлен транспортной компанией в ваш город.",
+    "Автомобиль в пути":"Автомобиль находится в пути к вам.",
+    "Автомобиль получен":"Автомобиль получен в городе назначения.",
+    "Автомобиль готов":"Ваш автомобиль готов. Спасибо, что выбрали JPCars!"
+  };
+  const body=hints[title] || `Новый этап по вашему автомобилю: ${title}.`;
+  return `🚗 <b>JPCars — новости по автомобилю</b>
+
+<b>${esc(car)}</b>
+${esc(body)}${note?`
+
+Комментарий менеджера:
+${esc(note)}`:""}
+
+Следить за дальнейшим движением можно в личном кабинете.`;
+}
+
+async function notifyStaffClientUpload(d,docTitle){
+  const staff=db.prepare(`
+    SELECT id,name,login,telegram_chat_id,notify_client_uploads
+    FROM staff_users
+    WHERE active=1 AND telegram_chat_id IS NOT NULL AND notify_client_uploads=1
+  `).all();
+  const car=[d.make,d.model].filter(Boolean).join(" ") || "Автомобиль";
+  for(const u of staff){
+    try{
+      await telegramApi("sendMessage",{
+        chat_id:u.telegram_chat_id,
+        text:`📎 <b>JPCars — клиент загрузил документ</b>
+
+Клиент: <b>${esc(d.client_name||"Клиент")}</b>
+Автомобиль: <b>${esc(car)}</b>
+Документ: <b>${esc(docTitle||"Новый документ")}</b>`,
+        parse_mode:"HTML",
+        disable_web_page_preview:true,
+        reply_markup:{inline_keyboard:[[{text:"Открыть сделку",url:`${PUBLIC_BASE_URL}/admin/deal/${d.id}`}]]}
+      });
+      db.prepare("INSERT INTO notification_logs(deal_id,channel,event,recipient,success,error) VALUES(?,?,?,?,1,'')")
+        .run(d.id,"telegram_staff","client_document_uploaded",String(u.telegram_chat_id));
+    }catch(e){
+      db.prepare("INSERT INTO notification_logs(deal_id,channel,event,recipient,success,error) VALUES(?,?,?,?,0,?)")
+        .run(d.id,"telegram_staff","client_document_uploaded",String(u.telegram_chat_id||""),String(e.message||e));
+    }
+  }
+}
+
+function staffTelegramConnectUrl(user){
+  if(!TELEGRAM_BOT_USERNAME) return "";
+  return `https://t.me/${TELEGRAM_BOT_USERNAME}?start=staff_${user.id}`;
 }
 
 function paymentStatusLabel(status){
@@ -887,8 +960,13 @@ function renderDeal(d, isAdmin=false) {
           <div class="row"><span class="muted">Получатель</span><b>${esc(d.telegram_first_name||"Telegram")}${d.telegram_username?` · @${esc(d.telegram_username)}`:""}</b></div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px">
             <form method="post" action="/admin/telegram/${d.id}/test"><button class="btn brand" type="submit">Отправить тест</button></form>
+            <form method="post" action="/admin/telegram/${d.id}/toggle-notifications"><button class="btn light" type="submit">${Number(d.telegram_notifications_enabled)===0?"Включить автоуведомления":"Отключить автоуведомления"}</button></form>
             <form method="post" action="/admin/telegram/${d.id}/disconnect" onsubmit="return confirm('Отключить Telegram клиента?')"><button class="btn light" type="submit">Отключить</button></form>
-          </div>`
+          </div>
+          <form class="form" method="post" action="/admin/telegram/${d.id}/message" style="margin-top:14px">
+            <textarea name="message" rows="3" placeholder="Написать клиенту в Telegram..." maxlength="3500" required></textarea>
+            <button class="btn brand" type="submit">Отправить сообщение клиенту</button>
+          </form>`
           : TELEGRAM_BOT_USERNAME
             ? `<p class="muted">Клиент должен открыть кнопку «Подключить Telegram» в своём кабинете.</p>`
             : `<p class="muted">Добавьте TELEGRAM_BOT_TOKEN и TELEGRAM_BOT_USERNAME в Railway Variables.</p>`}
@@ -938,7 +1016,7 @@ function renderDeal(d, isAdmin=false) {
           <input name="eta" type="date" value="${esc(d.eta||"")}">
           <input name="arrival_place" value="${esc(d.arrival_place||"")}" placeholder="Порт / город прибытия">
           <input name="note" placeholder="Комментарий для истории">
-          <button class="btn">Сохранить изменения</button>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px"><input type="checkbox" name="silent_telegram" value="1" style="width:auto"> Не отправлять Telegram-уведомление клиенту для этого изменения</label><button class="btn">Сохранить изменения</button>
         </form>
       </section>`:""}
     </div>
@@ -952,7 +1030,7 @@ app.get("/c/:token",publicLimiter,(req,res)=>{
 });
 
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.1.2"}));
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.2.0"}));
 
 app.get("/",(_req,res)=>res.redirect("/admin"));
 
@@ -1009,9 +1087,26 @@ app.post("/telegram/webhook",async (req,res)=>{
     if(!match) return;
     const token=match[1];
     if(!token){
-      await telegramApi("sendMessage",{chat_id:msg.chat.id,text:"Откройте кнопку «Подключить Telegram» в личном кабинете JPCars."});
+      await telegramApi("sendMessage",{chat_id:msg.chat.id,text:"Откройте кнопку подключения Telegram в JPCars."});
       return;
     }
+
+    if(token.startsWith("staff_")){
+      const staffId=Number(token.slice(6));
+      const u=db.prepare("SELECT * FROM staff_users WHERE id=? AND active=1").get(staffId);
+      if(!u){
+        await telegramApi("sendMessage",{chat_id:msg.chat.id,text:"Ссылка сотрудника JPCars недействительна."});
+        return;
+      }
+      db.prepare(`UPDATE staff_users SET telegram_chat_id=?,telegram_username=?,telegram_first_name=?,telegram_connected_at=CURRENT_TIMESTAMP WHERE id=?`)
+        .run(String(msg.chat.id),msg.from?.username||"",msg.from?.first_name||"",u.id);
+      await telegramApi("sendMessage",{
+        chat_id:msg.chat.id,
+        text:`✅ Telegram сотрудника JPCars подключён.\n\nТеперь сюда будут приходить служебные уведомления.`
+      });
+      return;
+    }
+
     const d=db.prepare("SELECT * FROM deals WHERE token=? AND access_enabled=1").get(token);
     if(!d){
       await telegramApi("sendMessage",{chat_id:msg.chat.id,text:"Ссылка JPCars недействительна или доступ к сделке отключён."});
@@ -1038,6 +1133,29 @@ app.post("/admin/telegram/:id/test",admin,async (req,res)=>{
   res.redirect("/admin/deal/"+d.id);
 });
 
+
+app.post("/admin/telegram/:id/message",admin,async (req,res)=>{
+  const d=db.prepare("SELECT * FROM deals WHERE id=?").get(req.params.id);
+  if(!d) return res.sendStatus(404);
+  const message=String(req.body.message||"").trim().slice(0,3500);
+  if(!message) return res.status(400).send("Введите сообщение");
+  const body=`💬 <b>Сообщение от JPCars</b>
+
+${esc(message)}`;
+  await sendTelegramForDeal(d,"manual_message",body);
+  audit(req,{dealId:d.id,type:"telegram",resourceId:d.id,action:"manual_message"});
+  res.redirect("/admin/deal/"+d.id);
+});
+
+app.post("/admin/telegram/:id/toggle-notifications",admin,(req,res)=>{
+  const d=db.prepare("SELECT * FROM deals WHERE id=?").get(req.params.id);
+  if(!d) return res.sendStatus(404);
+  const next=Number(d.telegram_notifications_enabled)===0?1:0;
+  db.prepare("UPDATE deals SET telegram_notifications_enabled=? WHERE id=?").run(next,d.id);
+  audit(req,{dealId:d.id,type:"telegram",resourceId:d.id,action:next?"notifications_enable":"notifications_disable"});
+  res.redirect("/admin/deal/"+d.id);
+});
+
 app.post("/admin/telegram/:id/disconnect",admin,(req,res)=>{
   const d=db.prepare("SELECT * FROM deals WHERE id=?").get(req.params.id);
   if(!d) return res.sendStatus(404);
@@ -1048,7 +1166,7 @@ app.post("/admin/telegram/:id/disconnect",admin,(req,res)=>{
 
 app.get("/admin/telegram-setup",superAdmin,(req,res)=>{
   res.send(shell("Telegram",`<main class="wrap">
-    <div class="adminbar"><div><h1>Telegram JPCars</h1><div class="muted">Настройка webhook</div></div><a href="/admin">← Сделки</a></div>
+    <div class="adminbar"><div><h1>Telegram JPCars</h1><div class="muted">Webhook, клиентские и служебные уведомления</div></div><a href="/admin">← Сделки</a></div>
     <div class="card">
       <div class="row"><span>Bot username</span><b>${TELEGRAM_BOT_USERNAME?`@${esc(TELEGRAM_BOT_USERNAME)}`:"Не задан"}</b></div>
       <div class="row"><span>Bot token</span><b>${TELEGRAM_BOT_TOKEN?"Задан":"Не задан"}</b></div>
@@ -1279,11 +1397,13 @@ function registerDocRoute(prefix,isAdmin){
 }
 registerDocRoute("/admin/doc",true);
 
-app.post("/c/:token/doc",publicLimiter,upload.single("document"),(req,res)=>{
+app.post("/c/:token/doc",publicLimiter,upload.single("document"),async (req,res)=>{
   const d=db.prepare("SELECT * FROM deals WHERE token=? AND access_enabled=1").get(req.params.token);
   if(!d || !req.file) return res.sendStatus(403);
   db.prepare("INSERT INTO documents(deal_id,category,original_name,stored_name,uploader,status) VALUES(?,?,?,?,?,?)")
     .run(d.id,req.body.category,decodeUploadName(req.file.originalname),req.file.filename,"client","uploaded");
+  const latestDoc=db.prepare("SELECT title FROM documents WHERE deal_id=? ORDER BY id DESC LIMIT 1").get(d.id);
+  await notifyStaffClientUpload(d,latestDoc?.title||"Новый документ");
   res.redirect("/c/"+d.token);
 });
 
@@ -1428,14 +1548,15 @@ app.get("/c/:token/payment/:id",(req,res)=>{
 
 
 app.get("/admin/team",superAdmin,(req,res)=>{
-  const users=db.prepare("SELECT id,name,login,role,active,created_at FROM staff_users ORDER BY id").all();
+  const users=db.prepare("SELECT id,name,login,role,active,telegram_chat_id,telegram_username,telegram_first_name,notify_client_uploads,created_at FROM staff_users ORDER BY id").all();
   res.send(shell("Команда",`<main class="wrap">
     <div class="adminbar"><div><h1>Команда JPCars</h1><div class="muted">Менеджеры и доступ к админке</div></div><a href="/admin">← Сделки</a></div>
     <div class="grid">
       <section class="card">
         <h2>Сотрудники</h2>
         ${users.map(u=>`<div class="row">
-          <div><b>${esc(u.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">${esc(u.login)} · ${u.role==="admin"?"Администратор":"Менеджер"}</div></div>
+          <div><b>${esc(u.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">${esc(u.login)} · ${u.role==="admin"?"Администратор":"Менеджер"}${u.telegram_chat_id?`<div class="muted" style="font-size:12px;margin-top:3px">Telegram: подключён${u.telegram_username?` · @${esc(u.telegram_username)}`:""}</div>`:`<div style="margin-top:6px"><a class="btn light" target="_blank" href="${staffTelegramConnectUrl(u)}">Подключить Telegram</a></div>`}
+            ${u.telegram_chat_id?`<form method="post" action="/admin/team/${u.id}/notify-toggle" style="margin-top:6px"><button class="btn light">${Number(u.notify_client_uploads)===1?"Не уведомлять о документах":"Уведомлять о документах"}</button></form>`:""}</div></div>
           <div style="text-align:right">
             <span class="doc-status ${u.active?"doc-ok":"doc-wait"}">${u.active?"Активен":"Отключён"}</span>
             ${u.id!==req.staff.id?`<form method="post" action="/admin/team/${u.id}/toggle" style="margin-top:6px"><button class="btn light">${u.active?"Отключить":"Включить"}</button></form>`:""}
@@ -1499,4 +1620,4 @@ app.use((err,req,res,next)=>{
   res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${currentStaff(req)?"/admin":"/"}">Вернуться</a></div></main>`,!!currentStaff(req)));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.1.2 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.2 listening on port ${PORT}; data=${DATA_ROOT}`));
