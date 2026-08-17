@@ -1,8 +1,8 @@
 {
   "name": "jpcars-cabinet",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "private": true,
-  "description": "JPCars cabinet v0.9 - production security hardening",
+  "description": "JPCars cabinet v1.0 Team - manager accounts and personal audit",
   "scripts": {
     "start": "node server.js"
   },

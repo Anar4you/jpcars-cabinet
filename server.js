@@ -56,6 +56,17 @@ CREATE TABLE IF NOT EXISTS access_logs (
   created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_access_logs_deal ON access_logs(deal_id, id DESC);
+CREATE TABLE IF NOT EXISTS staff_users (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  login TEXT UNIQUE NOT NULL,
+  password_hash TEXT NOT NULL,
+  password_salt TEXT NOT NULL,
+  role TEXT NOT NULL DEFAULT 'manager',
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
 `);
 
 class SQLiteSessionStore extends session.Store {
@@ -85,12 +96,43 @@ class SQLiteSessionStore extends session.Store {
   touch(sid, sess, cb) { this.set(sid,sess,cb); }
 }
 const sessionStore=new SQLiteSessionStore();
+function hashPassword(password,salt=crypto.randomBytes(16).toString("hex")){
+  const hash=crypto.scryptSync(password,salt,64).toString("hex");
+  return {salt,hash};
+}
+function verifyPassword(password,salt,expected){
+  try{
+    const actual=crypto.scryptSync(password,salt,64);
+    const exp=Buffer.from(expected,"hex");
+    return actual.length===exp.length && crypto.timingSafeEqual(actual,exp);
+  }catch(e){ return false; }
+}
+function ensureInitialAdmin(){
+  const row=db.prepare("SELECT COUNT(*) c FROM staff_users").get();
+  if(Number(row.c)>0) return;
+  const initial=ADMIN_PASSWORD || "change-me";
+  const p=hashPassword(initial);
+  db.prepare("INSERT INTO staff_users(name,login,password_hash,password_salt,role,active) VALUES(?,?,?,?,?,1)")
+    .run("Администратор JPCars","admin",p.hash,p.salt,"admin");
+}
+ensureInitialAdmin();
 
-function audit(req,{dealId=null,type="system",resourceId=null,actor="unknown",action="view"}={}) {
+function currentStaff(req){
+  if(!req.session?.staffId) return null;
+  return db.prepare("SELECT id,name,login,role,active FROM staff_users WHERE id=? AND active=1")
+    .get(req.session.staffId) || null;
+}
+function actorName(req){
+  const u=currentStaff(req);
+  return u ? `${u.name} (${u.login})` : "anonymous";
+}
+
+
+function audit(req,{dealId=null,type="system",resourceId=null,actor=null,action="view"}={}) {
   try {
     const ip=(req.ip || req.headers["x-forwarded-for"] || "").toString().slice(0,120);
     db.prepare("INSERT INTO access_logs(deal_id,resource_type,resource_id,actor,action,ip) VALUES(?,?,?,?,?,?)")
-      .run(dealId,type,resourceId,actor,action,ip);
+      .run(dealId,type,resourceId,actor || actorName(req),action,ip);
   } catch(e) { console.error("audit error",e); }
 }
 
@@ -467,24 +509,14 @@ function shell(title, body, isAdmin=false) {
   .bottom-nav{display:none}.adminbar{margin-bottom:18px;display:flex;justify-content:space-between;gap:10px}.adminbar a{text-decoration:none}
   .desktop-title{display:block}
   @media(max-width:800px){
-    html,body{max-width:100%;overflow-x:hidden}
-    body{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
-    .top{height:56px;padding:0 13px}.brand-logo{width:118px;height:42px}.top-right span{display:none}
-    .wrap{padding:11px 10px calc(24px + env(safe-area-inset-bottom))}
-    .grid{grid-template-columns:1fr;gap:11px}.full{grid-column:auto}.card{border-radius:17px;padding:15px;box-shadow:0 4px 16px rgba(21,38,61,.04)}
-    .hero{min-height:0;padding:17px}.eyebrow{font-size:10px;margin-bottom:9px}.hero h1{font-size:24px;letter-spacing:-.6px;overflow-wrap:anywhere}.hero-meta{font-size:12px;line-height:1.4;overflow-wrap:anywhere}.status-main{font-size:16px;line-height:1.3;margin-top:17px;align-items:flex-start}.status-dot{margin-top:3px;flex:0 0 auto}.progress-wrap{margin-top:17px}.progress-labels{font-size:10px;gap:6px}.next-step{margin-top:14px;padding:11px 12px}.next-step b{font-size:13px;line-height:1.4;display:block;overflow-wrap:anywhere}
-    .hero:before{display:none}.hero:after{width:230px;height:230px;border-width:46px;right:-150px;top:-120px}
-    .mini-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;margin-top:11px}.mini{padding:11px;border-radius:14px;min-width:0}.mini:last-child{grid-column:1/-1}.mini small{font-size:10px}.mini b{font-size:12px;line-height:1.35;display:block;overflow-wrap:anywhere}
-    .gallery{grid-template-columns:repeat(2,minmax(0,1fr))}.row{font-size:13px;gap:10px}.row b{max-width:60%;overflow-wrap:anywhere}.route{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:6px;align-items:stretch}.route-place{padding:9px 8px;min-width:0}.route-place small{font-size:9px}.route-place b{font-size:13px;line-height:1.25;display:block;overflow-wrap:anywhere}.route-arrow{font-size:15px;align-self:center}
-    .journey-group summary{padding:13px}.journey-body{padding:2px 13px 12px}.journey-head{gap:9px}.journey-title{font-size:13px}.journey-num{width:28px;height:28px}
-    .bottom-nav{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;left:0;right:0;bottom:0;background:rgba(255,255,255,.98);border-top:1px solid var(--line);z-index:40;padding-bottom:env(safe-area-inset-bottom);box-shadow:0 -6px 18px rgba(21,38,61,.06);backdrop-filter:blur(14px)}
-    .bottom-nav a{text-decoration:none;text-align:center;font-size:9px;color:var(--muted);padding:6px 2px 5px;font-weight:700;min-width:0}.bottom-nav span{display:block;font-size:16px;line-height:18px;margin-bottom:2px}
-    .section-anchor{scroll-margin-top:68px}
+    body{padding-bottom:74px}.top{height:66px;padding:0 16px}.brand-logo{width:132px;height:48px}.top-right span{display:none}.wrap{padding:16px 13px 32px}
+    .grid{grid-template-columns:1fr;gap:13px}.full{grid-column:auto}.card{border-radius:18px;padding:17px;box-shadow:0 5px 20px rgba(21,38,61,.045)}
+    .hero{min-height:0;padding:20px}.hero h1{font-size:27px}.hero-meta{font-size:13px}.status-main{font-size:17px;margin-top:21px}.progress-wrap{margin-top:20px}
+    .hero:before{display:none}.hero:after{right:-170px;top:-140px}.mini-grid{grid-template-columns:1fr 1fr}.mini:last-child{grid-column:1/-1}
+    .gallery{grid-template-columns:repeat(2,1fr)}.row{font-size:13px}.row b{max-width:58%}.route{gap:6px}.route-place{padding:10px 9px}.route-arrow{font-size:16px}
+    .bottom-nav{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;left:0;right:0;bottom:0;background:rgba(255,255,255,.97);border-top:1px solid var(--line);z-index:40;padding-bottom:env(safe-area-inset-bottom);box-shadow:0 -8px 24px rgba(21,38,61,.06)}
+    .bottom-nav a{text-decoration:none;text-align:center;font-size:10px;color:var(--muted);padding:9px 3px 8px;font-weight:700}.bottom-nav span{display:block;font-size:18px;margin-bottom:3px}
     .desktop-title{display:none}.adminbar{align-items:center}
-  }
-  @media(max-width:380px){
-    .wrap{padding-left:8px;padding-right:8px}.hero{padding:15px}.hero h1{font-size:22px}.status-main{font-size:15px}.progress-labels span:first-child,.progress-labels span:last-child{max-width:34%}
-    .route-place b{font-size:12px}.card{padding:14px}.bottom-nav a{font-size:8.5px}
   }
   </style></head><body>
   <header class="top">
@@ -801,7 +833,7 @@ app.get("/c/:token",publicLimiter,(req,res)=>{
   res.send(shell("Ваш автомобиль",renderDeal(d,false),false));
 });
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"0.9.0"}));
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.0.0"}));
 
 app.get("/",(_req,res)=>res.redirect("/admin"));
 
@@ -816,18 +848,36 @@ app.get("/admin/login",(req,res)=>{
 });
 
 app.post("/admin/login",loginLimiter,(req,res)=>{
-  if(req.body.login==="admin" && req.body.password===ADMIN_PASSWORD){
-    req.session.admin=true;
-    audit(req,{type:"auth",actor:"admin",action:"login_success"});
+  const login=String(req.body.login||"").trim();
+  const password=String(req.body.password||"");
+  const user=db.prepare("SELECT * FROM staff_users WHERE login=? AND active=1").get(login);
+  if(user && verifyPassword(password,user.password_salt,user.password_hash)){
+    req.session.staffId=user.id;
+    audit(req,{type:"auth",actor:`${user.name} (${user.login})`,action:"login_success"});
     return res.redirect("/admin");
   }
-  audit(req,{type:"auth",actor:"anonymous",action:"login_failed"});
+  audit(req,{type:"auth",actor:login||"anonymous",action:"login_failed"});
   res.status(401).send("Неверный логин или пароль");
 });
 
-const admin=(req,res,next)=>req.session.admin?next():res.redirect("/admin/login");
+const admin=(req,res,next)=>{
+  const u=currentStaff(req);
+  if(!u) return res.redirect("/admin/login");
+  req.staff=u;
+  next();
+};
+const superAdmin=(req,res,next)=>{
+  const u=currentStaff(req);
+  if(!u) return res.redirect("/admin/login");
+  if(u.role!=="admin") return res.status(403).send("Недостаточно прав");
+  req.staff=u;
+  next();
+};
 
-app.get("/admin/logout",(req,res)=>req.session.destroy(()=>res.redirect("/admin/login")));
+app.get("/admin/logout",(req,res)=>{
+  audit(req,{type:"auth",action:"logout"});
+  req.session.destroy(()=>res.redirect("/admin/login"));
+});
 
 app.get("/admin",admin,(req,res)=>{
   const q=(req.query.q||"").trim().toLowerCase();
@@ -857,7 +907,7 @@ app.get("/admin",admin,(req,res)=>{
   res.send(shell("Сделки",`<main class="wrap">
     <div class="adminbar">
       <div><h1>${archive?"Архив сделок":"Сделки JPCars"}</h1><div class="muted">${archive?"Завершённые сделки":"Рабочая панель менеджера"}</div></div>
-      <div style="display:flex;gap:8px"><a class="btn light" href="/admin?archive=${archive?0:1}">${archive?"Активные сделки":"Архив"}</a><a class="btn" href="/admin/new">+ Новая сделка</a></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${req.staff?.role==="admin"?`<a class="btn light" href="/admin/team">Команда</a>`:""}<a class="btn light" href="/admin?archive=${archive?0:1}">${archive?"Активные сделки":"Архив"}</a><a class="btn" href="/admin/new">+ Новая сделка</a></div>
     </div>
 
     <div class="mini-grid" style="margin-bottom:18px">
@@ -1016,7 +1066,8 @@ app.post("/admin/edit/:id",admin,(req,res)=>{
       Number(req.body.car_price)||0,Number(req.body.country_costs)||0,Number(req.body.delivery)||0,Number(req.body.customs_duty)||0,
       Number(req.body.customs_clearance)||0,Number(req.body.commission)||0,req.body.manager_note||"",d.id
     );
-  db.prepare("INSERT INTO events(deal_id,title,note) VALUES(?,?,?)").run(d.id,"Карточка сделки обновлена","Менеджер изменил данные автомобиля, логистики или финансов.");
+  db.prepare("INSERT INTO events(deal_id,title,note) VALUES(?,?,?)").run(d.id,"Карточка сделки обновлена",`Данные изменил ${actorName(req)}.`);
+  audit(req,{dealId:d.id,type:"deal",resourceId:d.id,action:"edit_card"});
   res.redirect("/admin/deal/"+d.id);
 });
 
@@ -1063,7 +1114,7 @@ app.get("/admin/doc-file/:id",admin,(req,res)=>{
   if(!x) return res.sendStatus(404);
   const filePath=path.join(UPLOAD_DIR,x.stored_name);
   if(!fs.existsSync(filePath)) return res.sendStatus(404);
-  audit(req,{dealId:x.deal_id,type:"document",resourceId:x.id,actor:"admin",action:"download"});
+  audit(req,{dealId:x.deal_id,type:"document",resourceId:x.id,actor:actorName(req),action:"download"});
   res.download(filePath,x.original_name);
 });
 
@@ -1083,7 +1134,7 @@ app.get("/admin/media-file/:id",admin,(req,res)=>{
   if(!x) return res.sendStatus(404);
   const filePath=path.join(UPLOAD_DIR,x.stored_name);
   if(!fs.existsSync(filePath)) return res.sendStatus(404);
-  audit(req,{dealId:x.deal_id,type:"media",resourceId:x.id,actor:"admin",action:"view"});
+  audit(req,{dealId:x.deal_id,type:"media",resourceId:x.id,actor:actorName(req),action:"view"});
   res.sendFile(filePath);
 });
 
@@ -1093,6 +1144,7 @@ app.post("/admin/doc/:docId/status",admin,(req,res)=>{
   if(!doc) return res.sendStatus(404);
   const allowed=["uploaded","verified","replace"];
   const status=allowed.includes(req.body.status)?req.body.status:"uploaded";
+  audit(req,{dealId:doc.deal_id,type:"document",resourceId:doc.id,action:`review:${status}`});
   db.prepare("UPDATE documents SET status=?,verified=?,manager_comment=? WHERE id=?")
     .run(status,status==="verified"?1:0,req.body.manager_comment||"",doc.id);
   res.redirect("/admin/deal/"+doc.deal_id);
@@ -1138,6 +1190,7 @@ app.post("/admin/archive/:id/toggle",admin,(req,res)=>{
   const d=db.prepare("SELECT * FROM deals WHERE id=?").get(req.params.id);
   if(!d) return res.sendStatus(404);
   db.prepare("UPDATE deals SET archived=? WHERE id=?").run(d.archived?0:1,d.id);
+  audit(req,{dealId:d.id,type:"deal",resourceId:d.id,action:d.archived?"restore":"archive"});
   res.redirect(d.archived?"/admin":"/admin?archive=1");
 });
 
@@ -1161,7 +1214,7 @@ app.get("/admin/payment-file/:id",admin,(req,res)=>{
   if(!p||!p.document_stored) return res.sendStatus(404);
   const filePath=path.join(UPLOAD_DIR,p.document_stored);
   if(!fs.existsSync(filePath)) return res.sendStatus(404);
-  audit(req,{dealId:p.deal_id,type:"payment",resourceId:p.id,actor:"admin",action:"download"});
+  audit(req,{dealId:p.deal_id,type:"payment",resourceId:p.id,actor:actorName(req),action:"download"});
   res.download(filePath,p.document_name||"payment-document");
 });
 
@@ -1174,6 +1227,58 @@ app.get("/c/:token/payment/:id",(req,res)=>{
   if(!fs.existsSync(filePath)) return res.sendStatus(404);
   audit(req,{dealId:d.id,type:"payment",resourceId:p.id,actor:"client",action:"download"});
   res.download(filePath,p.document_name||"payment-document");
+});
+
+
+app.get("/admin/team",superAdmin,(req,res)=>{
+  const users=db.prepare("SELECT id,name,login,role,active,created_at FROM staff_users ORDER BY id").all();
+  res.send(shell("Команда",`<main class="wrap">
+    <div class="adminbar"><div><h1>Команда JPCars</h1><div class="muted">Менеджеры и доступ к админке</div></div><a href="/admin">← Сделки</a></div>
+    <div class="grid">
+      <section class="card">
+        <h2>Сотрудники</h2>
+        ${users.map(u=>`<div class="row">
+          <div><b>${esc(u.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">${esc(u.login)} · ${u.role==="admin"?"Администратор":"Менеджер"}</div></div>
+          <div style="text-align:right">
+            <span class="doc-status ${u.active?"doc-ok":"doc-wait"}">${u.active?"Активен":"Отключён"}</span>
+            ${u.id!==req.staff.id?`<form method="post" action="/admin/team/${u.id}/toggle" style="margin-top:6px"><button class="btn light">${u.active?"Отключить":"Включить"}</button></form>`:""}
+          </div>
+        </div>`).join("")}
+      </section>
+      <section class="card">
+        <h2>Добавить сотрудника</h2>
+        <form class="form" method="post" action="/admin/team/new">
+          <input name="name" placeholder="Имя сотрудника" required>
+          <input name="login" placeholder="Логин" required>
+          <input name="password" type="password" placeholder="Пароль минимум 10 символов" required minlength="10">
+          <select name="role"><option value="manager">Менеджер</option><option value="admin">Администратор</option></select>
+          <button class="btn">Создать аккаунт</button>
+        </form>
+      </section>
+    </div>
+  </main>`,true));
+});
+
+app.post("/admin/team/new",superAdmin,(req,res)=>{
+  const name=String(req.body.name||"").trim();
+  const login=String(req.body.login||"").trim();
+  const password=String(req.body.password||"");
+  const role=req.body.role==="admin"?"admin":"manager";
+  if(!name || !login || password.length<10) return res.status(400).send("Проверьте данные сотрудника.");
+  if(db.prepare("SELECT id FROM staff_users WHERE login=?").get(login)) return res.status(400).send("Такой логин уже существует.");
+  const p=hashPassword(password);
+  const r=db.prepare("INSERT INTO staff_users(name,login,password_hash,password_salt,role,active) VALUES(?,?,?,?,?,1)")
+    .run(name,login,p.hash,p.salt,role);
+  audit(req,{type:"staff",resourceId:Number(r.lastInsertRowid),action:`create:${login}`});
+  res.redirect("/admin/team");
+});
+
+app.post("/admin/team/:id/toggle",superAdmin,(req,res)=>{
+  const u=db.prepare("SELECT * FROM staff_users WHERE id=?").get(req.params.id);
+  if(!u || u.id===req.staff.id) return res.sendStatus(400);
+  db.prepare("UPDATE staff_users SET active=? WHERE id=?").run(u.active?0:1,u.id);
+  audit(req,{type:"staff",resourceId:u.id,action:`${u.active?"disable":"enable"}:${u.login}`});
+  res.redirect("/admin/team");
 });
 
 app.get("/admin/broker/:id",admin,(req,res)=>{
@@ -1194,7 +1299,7 @@ app.get("/admin/broker/:id",admin,(req,res)=>{
 app.use((err,req,res,next)=>{
   console.error(err);
   const message=err && err.message ? err.message : "Ошибка сервера";
-  res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${req.session?.admin?"/admin":"/"}">Вернуться</a></div></main>`,!!req.session?.admin));
+  res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${currentStaff(req)?"/admin":"/"}">Вернуться</a></div></main>`,!!currentStaff(req)));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v0.9 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.0 listening on port ${PORT}; data=${DATA_ROOT}`));
