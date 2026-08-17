@@ -1030,7 +1030,7 @@ app.get("/c/:token",publicLimiter,(req,res)=>{
 });
 
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.2.0"}));
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.2.2"}));
 
 app.get("/",(_req,res)=>res.redirect("/admin"));
 
@@ -1083,7 +1083,7 @@ app.post("/telegram/webhook",async (req,res)=>{
   try{
     const msg=req.body?.message;
     if(!msg || msg.chat?.type!=="private" || !msg.text) return;
-    const match=msg.text.match(/^\/start(?:@\w+)?(?:\s+([A-Za-z0-9_-]{8,64}))?/);
+    const match=msg.text.match(/^\/start(?:@\w+)?(?:\s+([A-Za-z0-9_-]{1,64}))?/);
     if(!match) return;
     const token=match[1];
     if(!token){
@@ -1102,7 +1102,7 @@ app.post("/telegram/webhook",async (req,res)=>{
         .run(String(msg.chat.id),msg.from?.username||"",msg.from?.first_name||"",u.id);
       await telegramApi("sendMessage",{
         chat_id:msg.chat.id,
-        text:`✅ Telegram сотрудника JPCars подключён.\n\nТеперь сюда будут приходить служебные уведомления.`
+        text:`✅ Ваш Telegram подключён к аккаунту сотрудника JPCars.\n\nТеперь сюда будут приходить служебные уведомления.`
       });
       return;
     }
@@ -1222,7 +1222,7 @@ app.get("/admin",admin,(req,res)=>{
   res.send(shell("Сделки",`<main class="wrap">
     <div class="adminbar">
       <div><h1>${archive?"Архив сделок":"Сделки JPCars"}</h1><div class="muted">${archive?"Завершённые сделки":"Рабочая панель менеджера"}</div></div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap">${req.staff?.role==="admin"?`<a class="btn light" href="/admin/team">Команда</a><a class="btn light" href="/admin/telegram-setup">Telegram</a>`:""}<a class="btn light" href="/admin?archive=${archive?0:1}">${archive?"Активные сделки":"Архив"}</a><a class="btn" href="/admin/new">+ Новая сделка</a></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">${req.staff?.role==="admin"?`<a class="btn light" href="/admin/team">Команда</a><a class="btn light" href="/admin/telegram-setup">Telegram</a>`:""}<a class="btn light" href="/admin?archive=${archive?0:1}">${archive?"Активные сделки":"Архив"}</a><a class="btn light" href="/admin/my-telegram">Мой Telegram</a><a class="btn" href="/admin/new">+ Новая сделка</a></div>
     </div>
 
     <div class="mini-grid" style="margin-bottom:18px">
@@ -1547,6 +1547,66 @@ app.get("/c/:token/payment/:id",(req,res)=>{
 });
 
 
+
+app.get("/admin/my-telegram",admin,(req,res)=>{
+  const u=db.prepare("SELECT * FROM staff_users WHERE id=?").get(req.staff.id);
+  if(!u) return res.sendStatus(404);
+  res.send(shell("Мой Telegram",`<main class="wrap">
+    <div class="adminbar">
+      <div>
+        <h1>Мой Telegram</h1>
+        <div class="muted">${esc(u.name)} · ${esc(u.login)}</div>
+      </div>
+      <a href="/admin">← Сделки</a>
+    </div>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Подключение</h2>
+        ${u.telegram_chat_id
+          ? `<div class="row"><span class="muted">Статус</span><b>Подключён</b></div>
+             <div class="row"><span class="muted">Telegram</span><b>${u.telegram_username?`@${esc(u.telegram_username)}`:esc(u.telegram_first_name||"Подключённый аккаунт")}</b></div>
+             <div class="row"><span class="muted">Уведомления о документах клиентов</span><b>${Number(u.notify_client_uploads)===1?"Включены":"Отключены"}</b></div>
+             <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px">
+               <form method="post" action="/admin/my-telegram/notify-toggle">
+                 <button class="btn light" type="submit">${Number(u.notify_client_uploads)===1?"Отключить уведомления":"Включить уведомления"}</button>
+               </form>
+               <form method="post" action="/admin/my-telegram/disconnect" onsubmit="return confirm('Отключить ваш Telegram от JPCars?')">
+                 <button class="btn light" type="submit">Отключить Telegram</button>
+               </form>
+             </div>`
+          : TELEGRAM_BOT_USERNAME
+            ? `<p class="muted">Подключите свой Telegram, чтобы получать служебные уведомления JPCars.</p>
+               <a class="btn brand" target="_blank" href="${staffTelegramConnectUrl(u)}">Подключить мой Telegram</a>
+               <p class="muted" style="font-size:12px;margin-top:12px">Откроется @${esc(TELEGRAM_BOT_USERNAME)}. Нажмите Start / Запустить.</p>`
+            : `<p class="muted">Telegram-бот пока не настроен администратором.</p>`}
+      </section>
+
+      <section class="card">
+        <h2>Какие уведомления приходят</h2>
+        <p class="muted">Сейчас сотрудник получает служебное Telegram-уведомление, когда клиент загружает новый документ в личном кабинете.</p>
+      </section>
+    </div>
+  </main>`,true));
+});
+
+app.post("/admin/my-telegram/disconnect",admin,(req,res)=>{
+  db.prepare(`UPDATE staff_users
+    SET telegram_chat_id=NULL,telegram_username=NULL,telegram_first_name=NULL,telegram_connected_at=NULL
+    WHERE id=?`).run(req.staff.id);
+  audit(req,{type:"staff",resourceId:req.staff.id,action:"self_telegram_disconnect"});
+  res.redirect("/admin/my-telegram");
+});
+
+app.post("/admin/my-telegram/notify-toggle",admin,(req,res)=>{
+  const u=db.prepare("SELECT * FROM staff_users WHERE id=?").get(req.staff.id);
+  if(!u) return res.sendStatus(404);
+  const next=Number(u.notify_client_uploads)===1?0:1;
+  db.prepare("UPDATE staff_users SET notify_client_uploads=? WHERE id=?").run(next,u.id);
+  audit(req,{type:"staff",resourceId:u.id,action:next?"self_client_upload_notify_enable":"self_client_upload_notify_disable"});
+  res.redirect("/admin/my-telegram");
+});
+
 app.get("/admin/team",superAdmin,(req,res)=>{
   const users=db.prepare("SELECT id,name,login,role,active,telegram_chat_id,telegram_username,telegram_first_name,notify_client_uploads,created_at FROM staff_users ORDER BY id").all();
   res.send(shell("Команда",`<main class="wrap">
@@ -1555,7 +1615,9 @@ app.get("/admin/team",superAdmin,(req,res)=>{
       <section class="card">
         <h2>Сотрудники</h2>
         ${users.map(u=>`<div class="row">
-          <div><b>${esc(u.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">${esc(u.login)} · ${u.role==="admin"?"Администратор":"Менеджер"}${u.telegram_chat_id?`<div class="muted" style="font-size:12px;margin-top:3px">Telegram: подключён${u.telegram_username?` · @${esc(u.telegram_username)}`:""}</div>`:`<div style="margin-top:6px"><a class="btn light" target="_blank" href="${staffTelegramConnectUrl(u)}">Подключить Telegram</a></div>`}
+          <div><b>${esc(u.name)}</b><div class="muted" style="font-size:12px;margin-top:3px">${esc(u.login)} · ${u.role==="admin"?"Администратор":"Менеджер"}${u.telegram_chat_id
+              ? `<div class="muted" style="font-size:12px;margin-top:3px">Telegram: подключён${u.telegram_username?` · @${esc(u.telegram_username)}`:""}</div>`
+              : `<div class="muted" style="font-size:12px;margin-top:3px">Telegram: не подключён</div>`}
             ${u.telegram_chat_id?`<form method="post" action="/admin/team/${u.id}/notify-toggle" style="margin-top:6px"><button class="btn light">${Number(u.notify_client_uploads)===1?"Не уведомлять о документах":"Уведомлять о документах"}</button></form>`:""}</div></div>
           <div style="text-align:right">
             <span class="doc-status ${u.active?"doc-ok":"doc-wait"}">${u.active?"Активен":"Отключён"}</span>
@@ -1620,4 +1682,4 @@ app.use((err,req,res,next)=>{
   res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${currentStaff(req)?"/admin":"/"}">Вернуться</a></div></main>`,!!currentStaff(req)));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.2 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.2.2 listening on port ${PORT}; data=${DATA_ROOT}`));
