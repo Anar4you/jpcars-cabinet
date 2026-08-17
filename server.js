@@ -7,6 +7,8 @@ const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 const archiver = require("archiver");
+const helmet = require("helmet");
+const { rateLimit } = require("express-rate-limit");
 
 const app = express();
 const ROOT = __dirname;
@@ -34,6 +36,64 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const db = new DatabaseSync(DB_PATH);
 db.exec("PRAGMA journal_mode = WAL;");
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS app_sessions (
+  sid TEXT PRIMARY KEY,
+  sess TEXT NOT NULL,
+  expires_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_app_sessions_expires ON app_sessions(expires_at);
+
+CREATE TABLE IF NOT EXISTS access_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  deal_id INTEGER,
+  resource_type TEXT NOT NULL,
+  resource_id INTEGER,
+  actor TEXT NOT NULL,
+  action TEXT NOT NULL,
+  ip TEXT,
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_access_logs_deal ON access_logs(deal_id, id DESC);
+`);
+
+class SQLiteSessionStore extends session.Store {
+  get(sid, cb) {
+    try {
+      const now=Date.now();
+      db.prepare("DELETE FROM app_sessions WHERE expires_at < ?").run(now);
+      const row=db.prepare("SELECT sess,expires_at FROM app_sessions WHERE sid=?").get(sid);
+      if(!row || row.expires_at < now) return cb(null,null);
+      cb(null,JSON.parse(row.sess));
+    } catch(e) { cb(e); }
+  }
+  set(sid, sess, cb) {
+    try {
+      const maxAge=sess?.cookie?.maxAge || 1000*60*60*12;
+      const expiresAt=Date.now()+maxAge;
+      db.prepare(`INSERT INTO app_sessions(sid,sess,expires_at) VALUES(?,?,?)
+        ON CONFLICT(sid) DO UPDATE SET sess=excluded.sess,expires_at=excluded.expires_at`)
+        .run(sid,JSON.stringify(sess),expiresAt);
+      cb && cb(null);
+    } catch(e) { cb && cb(e); }
+  }
+  destroy(sid, cb) {
+    try { db.prepare("DELETE FROM app_sessions WHERE sid=?").run(sid); cb && cb(null); }
+    catch(e) { cb && cb(e); }
+  }
+  touch(sid, sess, cb) { this.set(sid,sess,cb); }
+}
+const sessionStore=new SQLiteSessionStore();
+
+function audit(req,{dealId=null,type="system",resourceId=null,actor="unknown",action="view"}={}) {
+  try {
+    const ip=(req.ip || req.headers["x-forwarded-for"] || "").toString().slice(0,120);
+    db.prepare("INSERT INTO access_logs(deal_id,resource_type,resource_id,actor,action,ip) VALUES(?,?,?,?,?,?)")
+      .run(dealId,type,resourceId,actor,action,ip);
+  } catch(e) { console.error("audit error",e); }
+}
+
 
 const FLOWS = {
   Japan: [
@@ -254,10 +314,36 @@ if (!db.prepare("SELECT id FROM deals LIMIT 1").get()) {
 }
 
 app.use("/assets", express.static(path.join(ROOT, "assets")));
+
+if (IS_PROD) app.set("trust proxy", 1);
+
+app.disable("x-powered-by");
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+  referrerPolicy: { policy: "same-origin" }
+}));
+
+const loginLimiter=rateLimit({
+  windowMs: 15*60*1000,
+  limit: 8,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: "Слишком много попыток входа. Попробуйте позже."
+});
+
+const publicLimiter=rateLimit({
+  windowMs: 15*60*1000,
+  limit: 300,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: "Слишком много запросов. Попробуйте позже."
+});
+
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
-if (IS_PROD) app.set("trust proxy", 1);
 app.use(session({
+  store: sessionStore,
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
@@ -268,6 +354,20 @@ app.use(session({
     maxAge: 1000 * 60 * 60 * 12
   }
 }));
+
+app.use((req,res,next)=>{
+  if(!IS_PROD || !["POST","PUT","PATCH","DELETE"].includes(req.method)) return next();
+  const expected=`${req.protocol}://${req.get("host")}`;
+  const origin=req.get("origin");
+  const referer=req.get("referer");
+  const sameOrigin=(origin && origin===expected) || (!origin && referer && referer.startsWith(expected+"/"));
+  if(!sameOrigin) {
+    audit(req,{type:"security",actor:req.session?.admin?"admin":"public",action:"csrf_block"});
+    return res.status(403).send("Запрос отклонён системой безопасности.");
+  }
+  next();
+});
+
 
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
@@ -281,11 +381,14 @@ const ALLOWED_MIME = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
   "application/zip"
 ]);
+const ALLOWED_EXT = new Set([".pdf",".jpg",".jpeg",".png",".webp",".mp4",".mov",".doc",".docx",".zip"]);
+
 const upload = multer({
   storage,
   limits: { fileSize: 30 * 1024 * 1024, files: 20 },
   fileFilter: (_req,file,cb) => {
-    if (!ALLOWED_MIME.has(file.mimetype)) return cb(new Error("Недопустимый тип файла"));
+    const ext=path.extname(decodeUploadName(file.originalname)).toLowerCase();
+    if (!ALLOWED_MIME.has(file.mimetype) || !ALLOWED_EXT.has(ext)) return cb(new Error("Недопустимый тип файла"));
     cb(null,true);
   }
 });
@@ -364,14 +467,24 @@ function shell(title, body, isAdmin=false) {
   .bottom-nav{display:none}.adminbar{margin-bottom:18px;display:flex;justify-content:space-between;gap:10px}.adminbar a{text-decoration:none}
   .desktop-title{display:block}
   @media(max-width:800px){
-    body{padding-bottom:74px}.top{height:66px;padding:0 16px}.brand-logo{width:132px;height:48px}.top-right span{display:none}.wrap{padding:16px 13px 32px}
-    .grid{grid-template-columns:1fr;gap:13px}.full{grid-column:auto}.card{border-radius:18px;padding:17px;box-shadow:0 5px 20px rgba(21,38,61,.045)}
-    .hero{min-height:0;padding:20px}.hero h1{font-size:27px}.hero-meta{font-size:13px}.status-main{font-size:17px;margin-top:21px}.progress-wrap{margin-top:20px}
-    .hero:before{display:none}.hero:after{right:-170px;top:-140px}.mini-grid{grid-template-columns:1fr 1fr}.mini:last-child{grid-column:1/-1}
-    .gallery{grid-template-columns:repeat(2,1fr)}.row{font-size:13px}.row b{max-width:58%}.route{gap:6px}.route-place{padding:10px 9px}.route-arrow{font-size:16px}
-    .bottom-nav{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;left:0;right:0;bottom:0;background:rgba(255,255,255,.97);border-top:1px solid var(--line);z-index:40;padding-bottom:env(safe-area-inset-bottom);box-shadow:0 -8px 24px rgba(21,38,61,.06)}
-    .bottom-nav a{text-decoration:none;text-align:center;font-size:10px;color:var(--muted);padding:9px 3px 8px;font-weight:700}.bottom-nav span{display:block;font-size:18px;margin-bottom:3px}
+    html,body{max-width:100%;overflow-x:hidden}
+    body{padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+    .top{height:56px;padding:0 13px}.brand-logo{width:118px;height:42px}.top-right span{display:none}
+    .wrap{padding:11px 10px calc(24px + env(safe-area-inset-bottom))}
+    .grid{grid-template-columns:1fr;gap:11px}.full{grid-column:auto}.card{border-radius:17px;padding:15px;box-shadow:0 4px 16px rgba(21,38,61,.04)}
+    .hero{min-height:0;padding:17px}.eyebrow{font-size:10px;margin-bottom:9px}.hero h1{font-size:24px;letter-spacing:-.6px;overflow-wrap:anywhere}.hero-meta{font-size:12px;line-height:1.4;overflow-wrap:anywhere}.status-main{font-size:16px;line-height:1.3;margin-top:17px;align-items:flex-start}.status-dot{margin-top:3px;flex:0 0 auto}.progress-wrap{margin-top:17px}.progress-labels{font-size:10px;gap:6px}.next-step{margin-top:14px;padding:11px 12px}.next-step b{font-size:13px;line-height:1.4;display:block;overflow-wrap:anywhere}
+    .hero:before{display:none}.hero:after{width:230px;height:230px;border-width:46px;right:-150px;top:-120px}
+    .mini-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;margin-top:11px}.mini{padding:11px;border-radius:14px;min-width:0}.mini:last-child{grid-column:1/-1}.mini small{font-size:10px}.mini b{font-size:12px;line-height:1.35;display:block;overflow-wrap:anywhere}
+    .gallery{grid-template-columns:repeat(2,minmax(0,1fr))}.row{font-size:13px;gap:10px}.row b{max-width:60%;overflow-wrap:anywhere}.route{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr);gap:6px;align-items:stretch}.route-place{padding:9px 8px;min-width:0}.route-place small{font-size:9px}.route-place b{font-size:13px;line-height:1.25;display:block;overflow-wrap:anywhere}.route-arrow{font-size:15px;align-self:center}
+    .journey-group summary{padding:13px}.journey-body{padding:2px 13px 12px}.journey-head{gap:9px}.journey-title{font-size:13px}.journey-num{width:28px;height:28px}
+    .bottom-nav{display:grid;grid-template-columns:repeat(4,1fr);position:fixed;left:0;right:0;bottom:0;background:rgba(255,255,255,.98);border-top:1px solid var(--line);z-index:40;padding-bottom:env(safe-area-inset-bottom);box-shadow:0 -6px 18px rgba(21,38,61,.06);backdrop-filter:blur(14px)}
+    .bottom-nav a{text-decoration:none;text-align:center;font-size:9px;color:var(--muted);padding:6px 2px 5px;font-weight:700;min-width:0}.bottom-nav span{display:block;font-size:16px;line-height:18px;margin-bottom:2px}
+    .section-anchor{scroll-margin-top:68px}
     .desktop-title{display:none}.adminbar{align-items:center}
+  }
+  @media(max-width:380px){
+    .wrap{padding-left:8px;padding-right:8px}.hero{padding:15px}.hero h1{font-size:22px}.status-main{font-size:15px}.progress-labels span:first-child,.progress-labels span:last-child{max-width:34%}
+    .route-place b{font-size:12px}.card{padding:14px}.bottom-nav a{font-size:8.5px}
   }
   </style></head><body>
   <header class="top">
@@ -651,6 +764,14 @@ function renderDeal(d, isAdmin=false) {
       </section>`:""}
 
       ${isAdmin?`<section class="card full">
+        <h2>🛡️ Журнал доступа</h2>
+        ${db.prepare("SELECT * FROM access_logs WHERE deal_id=? ORDER BY id DESC LIMIT 20").all(d.id).map(l=>`<div class="row">
+          <div><b>${esc(l.actor)} · ${esc(l.action)}</b><div class="muted" style="font-size:12px;margin-top:4px">${esc(l.resource_type)}${l.resource_id?` #${l.resource_id}`:""} · ${esc(l.ip||"")}</div></div>
+          <span class="muted">${new Date(l.created_at+"Z").toLocaleString("ru-RU")}</span>
+        </div>`).join("") || '<p class="muted">Записей пока нет.</p>'}
+      </section>`:""}
+
+      ${isAdmin?`<section class="card full">
         <h2>📦 Архив сделки</h2>
         <div class="row"><span class="muted">Статус</span><b>${d.archived?"В архиве":"Активная сделка"}</b></div>
         <form method="post" action="/admin/archive/${d.id}/toggle" style="margin-top:12px"><button class="btn light" type="submit">${d.archived?"Вернуть в активные":"Переместить в архив"}</button></form>
@@ -674,13 +795,13 @@ function renderDeal(d, isAdmin=false) {
   </main>`;
 }
 
-app.get("/c/:token",(req,res)=>{
+app.get("/c/:token",publicLimiter,(req,res)=>{
   const d=db.prepare("SELECT * FROM deals WHERE token=? AND access_enabled=1").get(req.params.token);
   if(!d) return res.status(404).send("Ссылка недействительна или доступ отключён");
   res.send(shell("Ваш автомобиль",renderDeal(d,false),false));
 });
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"0.8.1"}));
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"0.9.0"}));
 
 app.get("/",(_req,res)=>res.redirect("/admin"));
 
@@ -694,11 +815,13 @@ app.get("/admin/login",(req,res)=>{
   </div></main>`));
 });
 
-app.post("/admin/login",(req,res)=>{
+app.post("/admin/login",loginLimiter,(req,res)=>{
   if(req.body.login==="admin" && req.body.password===ADMIN_PASSWORD){
     req.session.admin=true;
+    audit(req,{type:"auth",actor:"admin",action:"login_success"});
     return res.redirect("/admin");
   }
+  audit(req,{type:"auth",actor:"anonymous",action:"login_failed"});
   res.status(401).send("Неверный логин или пароль");
 });
 
@@ -908,7 +1031,7 @@ function registerDocRoute(prefix,isAdmin){
 }
 registerDocRoute("/admin/doc",true);
 
-app.post("/c/:token/doc",upload.single("document"),(req,res)=>{
+app.post("/c/:token/doc",publicLimiter,upload.single("document"),(req,res)=>{
   const d=db.prepare("SELECT * FROM deals WHERE token=? AND access_enabled=1").get(req.params.token);
   if(!d || !req.file) return res.sendStatus(403);
   db.prepare("INSERT INTO documents(deal_id,category,original_name,stored_name,uploader,status) VALUES(?,?,?,?,?,?)")
@@ -931,6 +1054,7 @@ app.get("/c/:token/doc/:id",(req,res)=>{
   if(!x) return res.sendStatus(404);
   const filePath=path.join(UPLOAD_DIR,x.stored_name);
   if(!fs.existsSync(filePath)) return res.sendStatus(404);
+  audit(req,{dealId:d.id,type:"document",resourceId:x.id,actor:"client",action:"download"});
   res.download(filePath,x.original_name);
 });
 
@@ -939,6 +1063,7 @@ app.get("/admin/doc-file/:id",admin,(req,res)=>{
   if(!x) return res.sendStatus(404);
   const filePath=path.join(UPLOAD_DIR,x.stored_name);
   if(!fs.existsSync(filePath)) return res.sendStatus(404);
+  audit(req,{dealId:x.deal_id,type:"document",resourceId:x.id,actor:"admin",action:"download"});
   res.download(filePath,x.original_name);
 });
 
@@ -949,6 +1074,7 @@ app.get("/c/:token/media/:id",(req,res)=>{
   if(!x) return res.sendStatus(404);
   const filePath=path.join(UPLOAD_DIR,x.stored_name);
   if(!fs.existsSync(filePath)) return res.sendStatus(404);
+  audit(req,{dealId:d.id,type:"media",resourceId:x.id,actor:"client",action:"view"});
   res.sendFile(filePath);
 });
 
@@ -957,6 +1083,7 @@ app.get("/admin/media-file/:id",admin,(req,res)=>{
   if(!x) return res.sendStatus(404);
   const filePath=path.join(UPLOAD_DIR,x.stored_name);
   if(!fs.existsSync(filePath)) return res.sendStatus(404);
+  audit(req,{dealId:x.deal_id,type:"media",resourceId:x.id,actor:"admin",action:"view"});
   res.sendFile(filePath);
 });
 
@@ -1034,6 +1161,7 @@ app.get("/admin/payment-file/:id",admin,(req,res)=>{
   if(!p||!p.document_stored) return res.sendStatus(404);
   const filePath=path.join(UPLOAD_DIR,p.document_stored);
   if(!fs.existsSync(filePath)) return res.sendStatus(404);
+  audit(req,{dealId:p.deal_id,type:"payment",resourceId:p.id,actor:"admin",action:"download"});
   res.download(filePath,p.document_name||"payment-document");
 });
 
@@ -1044,6 +1172,7 @@ app.get("/c/:token/payment/:id",(req,res)=>{
   if(!p||!p.document_stored) return res.sendStatus(404);
   const filePath=path.join(UPLOAD_DIR,p.document_stored);
   if(!fs.existsSync(filePath)) return res.sendStatus(404);
+  audit(req,{dealId:d.id,type:"payment",resourceId:p.id,actor:"client",action:"download"});
   res.download(filePath,p.document_name||"payment-document");
 });
 
@@ -1068,4 +1197,4 @@ app.use((err,req,res,next)=>{
   res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${req.session?.admin?"/admin":"/"}">Вернуться</a></div></main>`,!!req.session?.admin));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v0.8.1 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v0.9 listening on port ${PORT}; data=${DATA_ROOT}`));

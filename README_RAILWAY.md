@@ -1,4 +1,4 @@
-# JPCars Cabinet v0.8.1 Cloud
+# JPCars Cabinet v0.9 Cloud Security
 
 Версия подготовлена для тестового размещения на Railway.
 
@@ -67,3 +67,7 @@
 - резервное копирование volume;
 - отдельное object storage для документов;
 - политику хранения и удаления персональных данных.
+
+
+## v0.9
+Админские сессии теперь хранятся в SQLite на persistent volume, добавлены rate limits, security headers и журнал доступа к файлам.

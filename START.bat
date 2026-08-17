@@ -1,7 +1,7 @@
 @echo off
 cd /d "%~dp0"
 echo ========================================
-echo JPCars Personal Cabinet v0.8.1 Cloud
+echo JPCars Personal Cabinet v0.9
 echo ========================================
 echo.
 if not exist "node_modules\express" (
