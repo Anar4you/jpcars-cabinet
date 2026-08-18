@@ -545,6 +545,25 @@ const upload = multer({
   }
 });
 
+const MEDIA_ALLOWED_MIME = new Set([
+  "image/jpeg","image/png","image/webp",
+  "video/mp4","video/quicktime"
+]);
+const MEDIA_ALLOWED_EXT = new Set([".jpg",".jpeg",".png",".webp",".mp4",".mov"]);
+
+const mediaUpload = multer({
+  storage,
+  limits: { fileSize: 150 * 1024 * 1024, files: 150 },
+  fileFilter: (_req,file,cb) => {
+    const ext=path.extname(decodeUploadName(file.originalname)).toLowerCase();
+    if (!MEDIA_ALLOWED_MIME.has(file.mimetype) || !MEDIA_ALLOWED_EXT.has(ext)) {
+      return cb(new Error("Для фото и видео разрешены JPG, PNG, WEBP, MP4 и MOV"));
+    }
+    cb(null,true);
+  }
+});
+
+
 const esc = s => String(s ?? "").replace(/[&<>"']/g, m => ({
   "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
 }[m]));
@@ -650,6 +669,12 @@ function shell(title, body, isAdmin=false) {
   .doc-row-actions{display:flex;align-items:flex-start;gap:8px;justify-content:flex-end;flex-wrap:wrap}
   .doc-row-actions form{display:flex;gap:5px;flex-wrap:wrap}
   .doc-help{font-size:12px;color:var(--muted);margin-top:6px;line-height:1.45}
+
+  
+  .gallery-more{margin-top:12px}
+  .gallery-more summary{cursor:pointer;display:inline-block;background:#eef1f4;color:var(--brand);font-weight:800;padding:10px 13px;border-radius:12px;list-style:none}
+  .gallery-more summary::-webkit-details-marker{display:none}
+  .gallery-more[open] summary{margin-bottom:12px}
 
   .gallery{display:grid;grid-template-columns:repeat(4,1fr);gap:11px}.thumb{aspect-ratio:4/3;background:#eef1f4;border-radius:14px;display:grid;place-items:center;text-align:center;padding:8px;font-size:12px;overflow:hidden;text-decoration:none;color:var(--brand);font-weight:700}
   .thumb img{width:100%;height:100%;object-fit:cover}.notice{background:#fff8e8;border:1px solid #f4e5b9;padding:13px;border-radius:12px;margin:12px 0;font-size:13px;line-height:1.55}
@@ -1053,15 +1078,28 @@ function renderDeal(d, isAdmin=false) {
 
       <section class="card full section-anchor" id="media">
         <h2>📸 Фото и видео автомобиля</h2>
-        <div class="gallery">
-          ${media.map(m=>`<div>${m.kind==="image"
-            ? `<a class="thumb" href="${isAdmin?`/admin/media-file/${m.id}`:`/c/${d.token}/media/${m.id}`}" target="_blank"><img src="${isAdmin?`/admin/media-file/${m.id}`:`/c/${d.token}/media/${m.id}`}" alt="${esc(m.caption||m.original_name)}"></a>`
-            : `<a class="thumb" href="${isAdmin?`/admin/media-file/${m.id}`:`/c/${d.token}/media/${m.id}`}" target="_blank">▶ ${esc(m.caption||m.original_name)}</a>`}
-            ${isAdmin?`<form method="post" action="/admin/media/${m.id}/delete" style="margin-top:6px" onsubmit="return confirm('Удалить файл?')"><button class="btn light" style="width:100%" type="submit">Удалить</button></form>`:""}
-            </div>`).join("") || '<div class="muted">Как только менеджер загрузит фотографии или видео, они появятся здесь.</div>'}
-        </div>
+        ${media.length?`
+          <div class="gallery">
+            ${media.slice(0,30).map(m=>`<div>${m.kind==="image"
+              ? `<a class="thumb" href="${isAdmin?`/admin/media-file/${m.id}`:`/c/${d.token}/media/${m.id}`}" target="_blank"><img loading="lazy" src="${isAdmin?`/admin/media-file/${m.id}`:`/c/${d.token}/media/${m.id}`}" alt="${esc(m.caption||m.original_name)}"></a>`
+              : `<a class="thumb" href="${isAdmin?`/admin/media-file/${m.id}`:`/c/${d.token}/media/${m.id}`}" target="_blank">▶ ${esc(m.caption||m.original_name)}</a>`}
+              ${isAdmin?`<form method="post" action="/admin/media/${m.id}/delete" style="margin-top:6px" onsubmit="return confirm('Удалить файл?')"><button class="btn light" style="width:100%" type="submit">Удалить</button></form>`:""}
+            </div>`).join("")}
+          </div>
+          ${media.length>30?`<details class="gallery-more">
+            <summary>Показать ещё ${media.length-30}</summary>
+            <div class="gallery">
+              ${media.slice(30).map(m=>`<div>${m.kind==="image"
+                ? `<a class="thumb" href="${isAdmin?`/admin/media-file/${m.id}`:`/c/${d.token}/media/${m.id}`}" target="_blank"><img loading="lazy" src="${isAdmin?`/admin/media-file/${m.id}`:`/c/${d.token}/media/${m.id}`}" alt="${esc(m.caption||m.original_name)}"></a>`
+                : `<a class="thumb" href="${isAdmin?`/admin/media-file/${m.id}`:`/c/${d.token}/media/${m.id}`}" target="_blank">▶ ${esc(m.caption||m.original_name)}</a>`}
+                ${isAdmin?`<form method="post" action="/admin/media/${m.id}/delete" style="margin-top:6px" onsubmit="return confirm('Удалить файл?')"><button class="btn light" style="width:100%" type="submit">Удалить</button></form>`:""}
+              </div>`).join("")}
+            </div>
+          </details>`:""}`
+          : '<div class="muted">Как только менеджер загрузит фотографии или видео, они появятся здесь.</div>'}
         ${isAdmin?`<form class="form" style="margin-top:14px" action="/admin/media/${d.id}" method="post" enctype="multipart/form-data">
-          <input type="file" name="media" multiple required>
+          <input type="file" name="media" multiple accept=".jpg,.jpeg,.png,.webp,.mp4,.mov" required>
+          <div class="muted" style="font-size:12px">До 150 файлов за одну загрузку и до 150 МБ на один файл. Форматы: JPG, PNG, WEBP, MP4, MOV.</div>
           <input name="caption" placeholder="Подпись, например: Стоянка Тояма">
           <button class="btn">Загрузить фото / видео</button>
         </form>`:""}
@@ -1240,7 +1278,7 @@ app.get("/c/:token",publicLimiter,(req,res)=>{
 });
 
 
-app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.3.4"}));
+app.get("/healthz",(_req,res)=>res.status(200).json({ok:true,service:"jpcars",version:"1.3.6"}));
 
 app.get("/",(_req,res)=>res.redirect("/admin"));
 
@@ -1698,7 +1736,7 @@ app.post("/c/:token/doc",publicLimiter,upload.single("document"),async (req,res)
   res.redirect("/c/"+d.token);
 });
 
-app.post("/admin/media/:id",admin,upload.array("media",20),(req,res)=>{
+app.post("/admin/media/:id",admin,mediaUpload.array("media",150),(req,res)=>{
   for(const f of req.files||[]){
     db.prepare("INSERT INTO media(deal_id,kind,caption,original_name,stored_name) VALUES(?,?,?,?,?)")
       .run(req.params.id,f.mimetype.startsWith("image/")?"image":"video",req.body.caption||"",decodeUploadName(f.originalname),f.filename);
@@ -2108,4 +2146,4 @@ app.use((err,req,res,next)=>{
   res.status(400).send(shell("Ошибка",`<main class="wrap"><div class="card"><h1>Не удалось выполнить действие</h1><p class="muted">${esc(message)}</p><a class="btn" href="${currentStaff(req)?"/admin":"/"}">Вернуться</a></div></main>`,!!currentStaff(req)));
 });
 
-app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.3.4 listening on port ${PORT}; data=${DATA_ROOT}`));
+app.listen(PORT,"0.0.0.0",()=>console.log(`JPCars v1.3.6 listening on port ${PORT}; data=${DATA_ROOT}`));

@@ -1,8 +1,8 @@
 {
   "name": "jpcars-cabinet",
-  "version": "1.3.4",
+  "version": "1.3.6",
   "private": true,
-  "description": "JPCars cabinet v1.3.4 - document tiles UI",
+  "description": "JPCars cabinet v1.3.6 - bulk media upload and paged gallery",
   "scripts": {
     "start": "node server.js"
   },
